@@ -86,8 +86,20 @@ const instructions = [
   'Hence MCP exposes safe paper/watch-only market workflow tools.',
   'Do not place live trades or request private keys through this server.',
   'Treat data_only routes, including TradeXYZ HIP-3 markets, as market context until execution is separately verified.',
-  'Use approval tools only after explicit user approval.',
+  'Use approval/save tools only after explicit user approval.',
+  'Pass stable anonymous_user_id/session_id/client_type metadata when available so Hence can save user-owned strategies and aggregate traction without requiring wallet auth.',
 ].join(' ');
+
+const identityProperties: JsonRecord = {
+  anonymous_user_id: { type: 'string', description: 'Optional stable non-secret anonymous user/workspace id. Email-like values are hashed by Hence.' },
+  account_id_hash: { type: 'string', description: 'Optional existing hashed account id. Do not send raw emails or secrets.' },
+  wallet_address: { type: 'string', description: 'Optional user wallet address. Future Privy-authenticated clients can use this for owned strategies.' },
+  account_id: { type: 'string', description: 'Optional Hence account id when supplied by a trusted authenticated client.' },
+  identity_source: { type: 'string', enum: ['anonymous', 'session', 'wallet', 'account_hash', 'privy', 'legacy'], description: 'Optional identity source label.' },
+  client_type: { type: 'string', description: 'Agent/client type such as codex, claude, hermes, cursor, cli.' },
+  session_id: { type: 'string', description: 'Optional MCP/agent session id for funnel attribution.' },
+  conversation_id: { type: 'string', description: 'Optional agent conversation/thread id for workflow continuity.' },
+};
 
 const tools: ToolDef[] = [
   {
@@ -102,6 +114,7 @@ const tools: ToolDef[] = [
         risk_level: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Risk framing for the paper/watch-only plan.' },
         horizon: { type: 'string', description: 'Optional horizon such as 7d, 30d, 6m.' },
         theme: { type: 'string', description: 'Optional market theme.' },
+        ...identityProperties,
       },
       required: ['goal'],
       additionalProperties: false,
@@ -122,7 +135,7 @@ const tools: ToolDef[] = [
   },
   {
     name: 'hence_approve_thesis',
-    description: 'Approve or edit one candidate thesis and create durable Cortex ForecastTask/evidence/paper strategy records.',
+    description: 'Approve/edit one candidate thesis and save it as durable ForecastTask/evidence/paper strategy records.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -130,6 +143,23 @@ const tools: ToolDef[] = [
         selected_candidate_id: { type: 'string' },
         human_edit: { type: 'string' },
         approved_by_user: { type: 'boolean' },
+        ...identityProperties,
+      },
+      required: ['workflow_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'hence_save_strategy',
+    description: 'Save an approved workflow candidate as a durable user/session-attributed Hence paper strategy.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workflow_id: { type: 'string' },
+        selected_candidate_id: { type: 'string' },
+        human_edit: { type: 'string' },
+        approved_by_user: { type: 'boolean' },
+        ...identityProperties,
       },
       required: ['workflow_id'],
       additionalProperties: false,
@@ -185,6 +215,7 @@ const tools: ToolDef[] = [
         channel: { type: 'string', enum: ['telegram', 'email', 'none'] },
         horizon: { type: 'string' },
         consent_to_followup: { type: 'boolean' },
+        ...identityProperties,
       },
       required: ['workflow_id'],
       additionalProperties: false,
@@ -234,6 +265,24 @@ function numberArg(args: JsonRecord, key: string, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
+function identityArgs(args: JsonRecord): JsonRecord {
+  const out: JsonRecord = {};
+  for (const key of [
+    'anonymous_user_id',
+    'account_id_hash',
+    'wallet_address',
+    'account_id',
+    'identity_source',
+    'client_type',
+    'session_id',
+    'conversation_id',
+  ]) {
+    const value = args[key];
+    if (typeof value === 'string' && value.trim()) out[key] = value;
+  }
+  return out;
+}
+
 async function callTool(name: string, rawArgs: JsonRecord = {}): Promise<JsonValue> {
   const args = withDefaults(rawArgs);
   if (name === 'hence_start_market_workflow') {
@@ -246,7 +295,7 @@ async function callTool(name: string, rawArgs: JsonRecord = {}): Promise<JsonVal
       body: { user_answer: stringArg(args, 'user_answer', 'userAnswer') },
     });
   }
-  if (name === 'hence_approve_thesis') {
+  if (name === 'hence_approve_thesis' || name === 'hence_save_strategy') {
     const workflowId = stringArg(args, 'workflow_id', 'workflowId');
     return apiRequest(`/public/hence-agent/workflows/${encodeURIComponent(workflowId)}/approve-thesis`, {
       method: 'POST',
@@ -254,6 +303,7 @@ async function callTool(name: string, rawArgs: JsonRecord = {}): Promise<JsonVal
         selected_candidate_id: stringArg(args, 'selected_candidate_id', 'selectedCandidateId') || undefined as unknown as JsonValue,
         human_edit: stringArg(args, 'human_edit', 'humanEdit') || undefined as unknown as JsonValue,
         approved_by_user: typeof args.approved_by_user === 'boolean' ? args.approved_by_user : true,
+        ...identityArgs(args),
       } as JsonRecord,
     });
   }
@@ -270,7 +320,7 @@ async function callTool(name: string, rawArgs: JsonRecord = {}): Promise<JsonVal
     return apiRequest(`/public/hence-agent/market-context?${params.toString()}`);
   }
   if (name === 'hence_start_thesis_watch') {
-    return apiRequest('/public/hence-agent/thesis-watches', { method: 'POST', body: args });
+    return apiRequest('/public/hence-agent/thesis-watches', { method: 'POST', body: { ...args, ...identityArgs(args) } });
   }
   throw new Error(`Unknown tool: ${name}`);
 }

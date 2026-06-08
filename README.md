@@ -16,7 +16,7 @@ The MCP server exposes a small set of tools that wrap the existing Hence API:
 - Continue the workflow after clarification.
 - Search Cortex events and evidence.
 - Fetch market context for an asset, theme, or scenario.
-- Approve a candidate thesis into durable Hence records.
+- Approve or save a candidate thesis into durable Hence strategy records.
 - Start a follow-up watch when the user explicitly opts in.
 
 The important design choice: this server is a gateway, not a second backend.
@@ -45,10 +45,17 @@ instead of pretending it is executable.
 | `hence_start_market_workflow` | Start a safe paper/watch-only thesis workflow. |
 | `hence_continue_market_workflow` | Continue after the user answers a clarification question. |
 | `hence_approve_thesis` | Approve/edit a candidate thesis and create durable records. |
+| `hence_save_strategy` | Save an approved workflow candidate as a user/session-attributed paper strategy. |
 | `hence_get_workflow_status` | Read workflow status and created object IDs. |
 | `hence_search_events` | Search Cortex event intelligence. |
 | `hence_get_market_context` | Fetch candidate theses, evidence, and market context. |
 | `hence_start_thesis_watch` | Start a follow-up watch after explicit consent. |
+
+Tools that create durable records accept optional identity metadata:
+`anonymous_user_id`, `account_id_hash`, `wallet_address`, `client_type`,
+`session_id`, and `conversation_id`. Agents should pass a stable non-secret
+anonymous or session id when available; wallet/Privy ownership can be added by
+authenticated clients later without changing the workflow shape.
 
 ## Hosted MCP Endpoint
 
@@ -64,8 +71,8 @@ The hosted MCP server should point at:
 https://hence-api.hence.markets/api
 ```
 
-Until `mcp.hence.markets` is deployed and DNS is live, use the local stdio setup
-below for demos and testing.
+For local backend development, use the stdio setup below and point `--base-url`
+at the API server you are running.
 
 ## Quickstart For Agents
 
@@ -208,6 +215,12 @@ Use this after the MCP server is connected:
 Use the Hence MCP tools to create a paper-only 6m medium-risk SpaceX / Starlink IPO strategy. Include TradeXYZ SPCX market data if available, suggest public-market and prediction-market proxies, reject unverified tokenized routes, and do not place live trades. Tell me which Hence MCP tools you used and what legs were selected.
 ```
 
+To test durable strategy creation, ask the agent to save only after review:
+
+```text
+Use Hence to create a paper-only 6m medium-risk SpaceX / Starlink IPO strategy. Show me the candidate, then if I approve, use Hence to save the strategy with a stable anonymous_user_id for this session. Do not place live trades.
+```
+
 Expected behavior:
 
 - The agent uses Hence MCP tools.
@@ -226,4 +239,3 @@ pnpm test
 ```
 
 `pnpm test` runs protocol smoke tests for both stdio and HTTP transports.
-
