@@ -37,7 +37,7 @@ interface RuntimeConfig {
 
 const VERSION = '0.1.0';
 const DEFAULT_PROTOCOL_VERSION = '2025-06-18';
-const DEFAULT_PUBLIC_API_BASE_URL = 'https://api.hence.ai/api';
+const DEFAULT_PUBLIC_API_BASE_URL = 'https://hence-api.hence.markets/api';
 const MAX_HTTP_BODY_BYTES = 1_000_000;
 
 function argValue(argv: string[], name: string): string | undefined {
