@@ -76,6 +76,11 @@ function parseArgs(argv: string[]): RuntimeConfig {
 }
 
 const config = parseArgs(process.argv.slice(2));
+const debugStdio = process.env.HENCE_MCP_DEBUG_STDIO === '1';
+
+function writeStdioDebug(message: string): void {
+  if (debugStdio) process.stderr.write(`[hence-mcp:stdio] ${message}\n`);
+}
 
 const instructions = [
   'Hence MCP exposes safe paper/watch-only market workflow tools.',
@@ -333,10 +338,29 @@ async function handleStdioRequest(request: JsonRpcRequest): Promise<void> {
 
 function startStdio(): void {
   let buffer = Buffer.alloc(0);
+  let stdinClosed = false;
+  let stdioDraining = false;
+  const pendingRequests = new Set<Promise<void>>();
   const keepAlive = setInterval(() => undefined, 2_147_483_647);
-  const exitStdio = () => {
+
+  const exitWhenIdle = () => {
+    if (!stdinClosed || pendingRequests.size > 0 || stdioDraining) return;
+    writeStdioDebug('draining');
+    stdioDraining = true;
     clearInterval(keepAlive);
-    process.exit(0);
+  };
+
+  const dispatchRequest = (request: JsonRpcRequest) => {
+    writeStdioDebug(`dispatch ${request.method || 'unknown'}`);
+    const pending = handleStdioRequest(request)
+      .catch((err) => {
+        process.stderr.write(`[hence-mcp] request error: ${err instanceof Error ? err.message : String(err)}\n`);
+      })
+      .finally(() => {
+        pendingRequests.delete(pending);
+        exitWhenIdle();
+      });
+    pendingRequests.add(pending);
   };
 
   function tryParseContentLength(): boolean {
@@ -351,7 +375,7 @@ function startStdio(): void {
     if (buffer.length < end) return false;
     const payload = buffer.subarray(start, end).toString('utf8');
     buffer = buffer.subarray(end);
-    void handleStdioRequest(JSON.parse(payload) as JsonRpcRequest);
+    dispatchRequest(JSON.parse(payload) as JsonRpcRequest);
     return true;
   }
 
@@ -361,11 +385,12 @@ function startStdio(): void {
     const line = buffer.subarray(0, lineEnd).toString('utf8').trim();
     buffer = buffer.subarray(lineEnd + 1);
     if (!line) return true;
-    void handleStdioRequest(JSON.parse(line) as JsonRpcRequest);
+    dispatchRequest(JSON.parse(line) as JsonRpcRequest);
     return true;
   }
 
   process.stdin.on('data', (chunk: Buffer) => {
+    writeStdioDebug(`data ${chunk.length}`);
     buffer = Buffer.concat([buffer, chunk]);
     try {
       while (buffer.length > 0) {
@@ -381,8 +406,11 @@ function startStdio(): void {
     }
   });
 
-  process.stdin.on('end', exitStdio);
-  process.stdin.on('close', exitStdio);
+  process.stdin.on('end', () => {
+    writeStdioDebug('end');
+    stdinClosed = true;
+    exitWhenIdle();
+  });
   process.stdin.resume();
 }
 

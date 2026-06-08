@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 
 const entry = new URL('../dist/index.js', import.meta.url).pathname;
 
@@ -44,16 +44,19 @@ function parseFrames(output) {
   return frames;
 }
 
-function execShell(command, options = {}) {
+function waitForExit(child, timeoutMs = 5000) {
   return new Promise((resolve, reject) => {
-    execFile('/bin/sh', ['-c', command], { maxBuffer: 2_000_000, ...options }, (error, stdout, stderr) => {
-      if (error) {
-        error.stdout = stdout;
-        error.stderr = stderr;
-        reject(error);
-        return;
-      }
-      resolve({ stdout, stderr });
+    const timeout = setTimeout(() => {
+      child.kill();
+      reject(new Error('child process timed out'));
+    }, timeoutMs);
+    child.once('close', (code, signal) => {
+      clearTimeout(timeout);
+      resolve({ code, signal });
+    });
+    child.once('error', (err) => {
+      clearTimeout(timeout);
+      reject(err);
     });
   });
 }
@@ -63,8 +66,20 @@ async function smokeStdio() {
     frame({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } }),
     frame({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }),
   ].join('');
-  const encoded = Buffer.from(stdinPayload).toString('base64');
-  const { stdout } = await execShell(`printf %s '${encoded}' | base64 -d | ${process.execPath} '${entry}' --base-url http://127.0.0.1:1/api`);
+  const child = spawn(process.execPath, [entry, '--base-url', 'http://127.0.0.1:1/api'], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  let stdout = Buffer.alloc(0);
+  let stderr = Buffer.alloc(0);
+  child.stdout.on('data', (chunk) => {
+    stdout = Buffer.concat([stdout, chunk]);
+  });
+  child.stderr.on('data', (chunk) => {
+    stderr = Buffer.concat([stderr, chunk]);
+  });
+  child.stdin.end(stdinPayload);
+  const { code, signal } = await waitForExit(child);
+  assert.equal(code, 0, `stdio server exited with code ${code} signal ${signal}: ${stderr.toString('utf8')}`);
   const responses = parseFrames(stdout);
   assert.equal(responses[0].id, 1);
   assert.equal(responses[0].result.serverInfo.name, '@hence-markets/mcp-server');
