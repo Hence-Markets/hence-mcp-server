@@ -14,9 +14,10 @@ The MCP server exposes a small set of tools that wrap the existing Hence API:
 
 - Start a market thesis workflow from a natural-language goal.
 - Continue the workflow after clarification.
+- Fetch a concise workflow summary for presentation-safe output.
 - Search Cortex events and evidence.
 - Fetch market context for an asset, theme, or scenario.
-- Approve or save a candidate thesis into durable Hence strategy records.
+- Approve a candidate thesis into durable Hence strategy records.
 - Start a follow-up watch when the user explicitly opts in.
 
 The important design choice: this server is a gateway, not a second backend.
@@ -44,8 +45,9 @@ instead of pretending it is executable.
 | --- | --- |
 | `hence_start_market_workflow` | Start a safe paper/watch-only thesis workflow. |
 | `hence_continue_market_workflow` | Continue after the user answers a clarification question. |
-| `hence_approve_thesis` | Approve/edit a candidate thesis and create durable records. |
-| `hence_save_strategy` | Save an approved workflow candidate as a user/session-attributed paper strategy. |
+| `hence_get_workflow_summary` | Get a concise presenter-friendly candidate/legs/evidence/blockers summary. |
+| `hence_approve_thesis` | Approve/edit a candidate thesis and create durable records. Always pass `selected_candidate_id` when multiple candidates exist. |
+| `hence_save_strategy` | Deprecated alias of `hence_approve_thesis` kept for compatibility; prefer approval directly. |
 | `hence_get_workflow_status` | Read workflow status and created object IDs. |
 | `hence_search_events` | Search Cortex event intelligence. |
 | `hence_get_market_context` | Fetch candidate theses, evidence, and market context. |
@@ -81,6 +83,8 @@ at the API server you are running.
 ```bash
 codex mcp add hence --url https://mcp.hence.markets/mcp
 ```
+
+Then start a **fresh Codex session** so the new MCP tools are hydrated into the thread before you prompt the model.
 
 Then in Codex:
 

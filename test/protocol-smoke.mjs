@@ -83,8 +83,14 @@ async function smokeStdio() {
   const responses = parseFrames(stdout);
   assert.equal(responses[0].id, 1);
   assert.equal(responses[0].result.serverInfo.name, '@hence-markets/mcp-server');
+  assert.match(responses[0].result.instructions, /Always call hence_start_market_workflow first/i);
+  assert.match(responses[0].result.instructions, /always pass selected_candidate_id/i);
   assert.equal(responses[1].id, 2);
   assert.ok(responses[1].result.tools.some((tool) => tool.name === 'hence_start_market_workflow'));
+  assert.ok(responses[1].result.tools.some((tool) => tool.name === 'hence_get_workflow_summary'));
+  const saveTool = responses[1].result.tools.find((tool) => tool.name === 'hence_save_strategy');
+  assert.ok(saveTool, 'expected hence_save_strategy to remain present for backward compatibility');
+  assert.match(saveTool.description, /deprecated alias/i);
 }
 
 async function waitForHttp(port) {
@@ -121,6 +127,9 @@ async function smokeHttp() {
       body: JSON.stringify({ jsonrpc: '2.0', id: 'tools', method: 'tools/list', params: {} }),
     }).then((res) => res.json());
     assert.ok(list.result.tools.some((tool) => tool.name === 'hence_get_market_context'));
+    assert.ok(list.result.tools.some((tool) => tool.name === 'hence_get_workflow_summary'));
+    const saveTool = list.result.tools.find((tool) => tool.name === 'hence_save_strategy');
+    assert.match(saveTool.description, /deprecated alias/i);
   } finally {
     child.kill();
     await Promise.race([once(child, 'exit'), new Promise((resolve) => setTimeout(resolve, 500))]);

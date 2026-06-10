@@ -85,8 +85,13 @@ function writeStdioDebug(message: string): void {
 const instructions = [
   'Hence MCP exposes safe paper/watch-only market workflow tools.',
   'Do not place live trades or request private keys through this server.',
+  'Always call hence_start_market_workflow first.',
+  'If the workflow returns needs_clarification, ask the user the returned question and then call hence_continue_market_workflow.',
+  'When candidate theses are ready, present the concise workflow summary or the best matching candidate with selected and rejected legs, evidence, and blockers.',
   'Treat data_only routes, including TradeXYZ HIP-3 markets, as market context until execution is separately verified.',
-  'Use approval/save tools only after explicit user approval.',
+  'Use approval/save tools only after explicit user approval, and always pass selected_candidate_id when multiple candidates exist.',
+  'Prefer hence_approve_thesis for durable creation; hence_save_strategy is only a deprecated compatibility alias.',
+  'Use external web search only if Hence returns reduced-context warnings or missing evidence that requires manual augmentation.',
   'Pass stable anonymous_user_id/session_id/client_type metadata when available so Hence can save user-owned strategies and aggregate traction without requiring wallet auth.',
 ].join(' ');
 
@@ -151,7 +156,7 @@ const tools: ToolDef[] = [
   },
   {
     name: 'hence_save_strategy',
-    description: 'Save an approved workflow candidate as a durable user/session-attributed Hence paper strategy.',
+    description: 'Deprecated alias of hence_approve_thesis kept for compatibility. Save an explicitly approved candidate as a durable user/session-attributed Hence paper strategy; always pass selected_candidate_id when more than one candidate exists.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -168,6 +173,18 @@ const tools: ToolDef[] = [
   {
     name: 'hence_get_workflow_status',
     description: 'Read workflow progress, created durable object IDs, and SmartIntent promotion blockers.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workflow_id: { type: 'string' },
+      },
+      required: ['workflow_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'hence_get_workflow_summary',
+    description: 'Fetch a concise presenter-friendly summary for a workflow, including the recommended candidate, selected/rejected legs, evidence, blockers, and whether approval is still required.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -310,6 +327,10 @@ async function callTool(name: string, rawArgs: JsonRecord = {}): Promise<JsonVal
   if (name === 'hence_get_workflow_status') {
     const workflowId = stringArg(args, 'workflow_id', 'workflowId');
     return apiRequest(`/public/hence-agent/workflows/${encodeURIComponent(workflowId)}/status`);
+  }
+  if (name === 'hence_get_workflow_summary') {
+    const workflowId = stringArg(args, 'workflow_id', 'workflowId');
+    return apiRequest(`/public/hence-agent/workflows/${encodeURIComponent(workflowId)}/summary`);
   }
   if (name === 'hence_search_events') {
     const params = new URLSearchParams({ q: stringArg(args, 'query'), limit: String(numberArg(args, 'limit', 6)) });
