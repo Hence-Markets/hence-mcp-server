@@ -84,13 +84,30 @@ at the API server you are running.
 codex mcp add hence --url https://mcp.hence.markets/mcp
 ```
 
-Then start a **fresh Codex session** so the new MCP tools are hydrated into the thread before you prompt the model.
+**What to do next (this is required):**
 
-Then in Codex:
+1. **Start a fresh Codex session**. The current thread will usually not hydrate newly added MCP tools.
+2. In the new session, run:
 
 ```text
 /mcp
 ```
+
+3. Confirm you can see the `hence` server/tools.
+4. Then try a first prompt like:
+
+```text
+Use Hence MCP to turn this belief into a paper strategy. Show me:
+- the thesis in one sentence
+- the asset basket with ticker + full asset name
+- the exact percentage allocation for each asset
+- one short reason per asset
+- how I can save it anonymously or under a handle
+
+Belief: humanoid robots walking about US cities by 2028, not just one demo but thousands.
+```
+
+**If you do not start a fresh session, Codex may show the MCP as installed but still fail to expose callable Hence tools in the current thread.**
 
 ### Claude Code, Hosted HTTP
 
@@ -140,6 +157,14 @@ Then add the local stdio server to your agent.
 ```bash
 codex mcp add hence -- node "$PWD/dist/index.js" --base-url http://127.0.0.1:3001/api --ref demo
 ```
+
+Then:
+
+1. start a **fresh Codex session**
+2. run `/mcp`
+3. confirm the `hence` server is visible before asking for a thesis
+
+If Codex says the server is installed but Hence tools are not callable, you are almost certainly still in the old session.
 
 ### Claude Code Local Stdio
 

@@ -85,13 +85,16 @@ function writeStdioDebug(message: string): void {
 const instructions = [
   'Hence MCP exposes safe paper/watch-only market workflow tools.',
   'Do not place live trades or request private keys through this server.',
+  'On first run after install in Codex, if Hence tools are missing in the current thread, tell the user to start a fresh Codex session and run /mcp before trying again.',
   'Always call hence_start_market_workflow first.',
   'If the workflow returns needs_clarification, ask the user the returned question and then call hence_continue_market_workflow.',
-  'When candidate theses are ready, present the concise workflow summary or the best matching candidate with selected and rejected legs, evidence, and blockers.',
+  'When candidate theses are ready, call hence_get_workflow_summary and present the thesis plus a clean basket: ticker, full asset name, direction, allocation percent, and reason for each selected leg.',
   'Treat data_only routes, including TradeXYZ HIP-3 markets, as market context until execution is separately verified.',
   'Use approval/save tools only after explicit user approval, and always pass selected_candidate_id when multiple candidates exist.',
   'Prefer hence_approve_thesis for durable creation; hence_save_strategy is only a deprecated compatibility alias.',
-  'Use external web search only if Hence returns reduced-context warnings or missing evidence that requires manual augmentation.',
+  'Before saving, ask whether the user wants a recognizable handle/username attached or prefers anonymous attribution.',
+  'When a candidate is ready, end with explicit next steps such as: save strategy, save strategy as <handle>, or save anonymous.',
+  'Use external web search only if Hence returns reduced-context warnings or missing evidence that requires manual augmentation. Do not silently fall back to generic web research when the user explicitly asked to use Hence MCP.',
   'Pass stable anonymous_user_id/session_id/client_type metadata when available so Hence can save user-owned strategies and aggregate traction without requiring wallet auth.',
 ].join(' ');
 
@@ -548,6 +551,15 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse): Pro
       transport: 'http',
       endpoint: '/mcp',
       tools: tools.map((tool) => tool.name),
+      quickstart: {
+        codex_install: 'codex mcp add hence --url https://mcp.hence.markets/mcp',
+        required_next_steps: [
+          'Start a fresh Codex session',
+          'Run /mcp',
+          'Confirm the hence server is visible before prompting the model',
+        ],
+        first_prompt: 'Use Hence MCP to turn this belief into a paper strategy. Show the thesis, ticker + full asset name, exact percentage allocation, one reason per asset, and how to save anonymously or under a handle.',
+      },
     });
     return;
   }
