@@ -1,19 +1,12 @@
-FROM node:22-alpine AS deps
+# Hence MCP server. Standard library only: no dependencies to install or audit.
+FROM python:3.14-slim
+ENV PYTHONUNBUFFERED=1
 WORKDIR /app
-RUN corepack enable
-COPY package.json pnpm-lock.yaml* ./
-RUN if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; else pnpm install; fi
-
-FROM deps AS build
-COPY tsconfig.json ./
-COPY src ./src
-RUN pnpm build
-
-FROM node:22-alpine AS runtime
-WORKDIR /app
-ENV NODE_ENV=production
-COPY package.json ./
-COPY --from=build /app/dist ./dist
-EXPOSE 3333
-CMD ["node", "dist/index.js", "--http"]
-
+COPY gateway/ ./gateway/
+COPY data/ ./data/
+RUN useradd --uid 10002 --create-home gateway
+USER gateway
+EXPOSE 4340
+HEALTHCHECK --interval=15s --timeout=5s --start-period=5s --retries=6 \
+  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4340/healthz', timeout=4)"]
+CMD ["python", "-m", "gateway.app"]

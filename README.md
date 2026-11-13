@@ -1,270 +1,132 @@
-# Hence MCP Server
+# Hence MCP server
 
-Give coding agents a clean, safe way to ask Hence for market context, thesis
-construction, paper strategies, and scenario-linked evidence.
+The door AI agents use to read [Hence](https://app.hence.markets). Connect it to Claude,
+ChatGPT, Grok or a coding agent and ask "what does Hence have on AI capex?" or "where can I
+trade OpenAI exposure?" and get real theses and markets back, with links into the app.
 
-This repo contains the MCP gateway for [Hence](https://hence.markets). It is
-designed for agent flows like Codex, Claude Code, Hermes, Cursor, and other MCP
-clients that should be able to say: "I have a market view. Help me express it
-with the best available assets, evidence, and paper/watch-only strategy."
+Hence turns a belief about the world into a researched basket of holdings across perpetuals,
+spot tokens and outcome markets, and tracks it. This server is a small
+[Model Context Protocol](https://modelcontextprotocol.io) server (Streamable HTTP) in front of
+the Hence app.
 
-## What This Does
+**This version is read-only.** It holds no key, no database and no user data. Every tool reads
+something the Hence app already shows a signed-out visitor. It cannot create an account, a
+thesis or a trade; to act on anything, a person opens the returned link in Hence.
 
-The MCP server exposes a small set of tools that wrap the existing Hence API:
-
-- Start a market thesis workflow from a natural-language goal.
-- Continue the workflow after clarification.
-- Fetch a concise workflow summary for presentation-safe output.
-- Search Cortex events and evidence.
-- Fetch market context for an asset, theme, or scenario.
-- Approve a candidate thesis into durable Hence strategy records.
-- Start a follow-up watch when the user explicitly opts in.
-
-The important design choice: this server is a gateway, not a second backend.
-Cortex, scenarios, strategy construction, paper trading, TradeXYZ, prediction
-market context, and durable records all remain in the Hence API.
-
-## Safety Model
-
-This v0 server is intentionally safe by default:
-
-- No live orders.
-- No private keys.
-- No wallet custody.
-- No silent durable record creation.
-- Paper/watch-only workflows only.
-- TradeXYZ and other `data_only` venues are market context, not live routing.
-- Approval tools should be called only after explicit user approval.
-
-If a route is manual, unsupported, or data-only, agents should say that clearly
-instead of pretending it is executable.
+> This replaces the earlier TypeScript server (v0.1), which wrapped a previous Hence API that
+> no longer exists. Its tool names (`hence_start_market_workflow` and the rest) are gone.
 
 ## Tools
 
-| Tool | Purpose |
-| --- | --- |
-| `hence_start_market_workflow` | Start a safe paper/watch-only thesis workflow. |
-| `hence_continue_market_workflow` | Continue after the user answers a clarification question. |
-| `hence_get_workflow_summary` | Get a concise presenter-friendly candidate/legs/evidence/blockers summary. |
-| `hence_approve_thesis` | Approve/edit a candidate thesis and create durable records. Always pass `selected_candidate_id` when multiple candidates exist. |
-| `hence_save_strategy` | Deprecated alias of `hence_approve_thesis` kept for compatibility; prefer approval directly. |
-| `hence_get_workflow_status` | Read workflow status and created object IDs. |
-| `hence_search_events` | Search Cortex event intelligence. |
-| `hence_get_market_context` | Fetch candidate theses, evidence, and market context. |
-| `hence_start_thesis_watch` | Start a follow-up watch after explicit consent. |
+| Tool | What it reads |
+|---|---|
+| `search_theses` | Public theses, by words, basket (perps or spot) and order; paged with a cursor |
+| `get_thesis` | One thesis: the claim, holdings with weights and reasons, other baskets, sources, checkpoints, and a price history |
+| `get_featured_theses` | Today's featured selection |
+| `search_markets` | What trades on Hence and where: perpetuals with live price, funding and open interest, and Robinhood Chain spot tokens |
 
-Tools that create durable records accept optional identity metadata:
-`anonymous_user_id`, `account_id_hash`, `wallet_address`, `client_type`,
-`session_id`, and `conversation_id`. Agents should pass a stable non-secret
-anonymous or session id when available; wallet/Privy ownership can be added by
-authenticated clients later without changing the workflow shape.
+Four tools on purpose. A caller pays for every tool description on every turn; the whole list
+is about a thousand tokens.
 
-## Hosted MCP Endpoint
+## What the server promises
 
-The intended public endpoint is:
+1. **A failed read is an error, never an empty or zeroed result.** Only a `200` with JSON from
+   Hence counts as data, and only data is cached. A tool turns a failure into an error the
+   model reads ("No theses were read"). When one of two sources fails, the result carries an
+   `incomplete` field that says which.
+2. **A missing figure is `null`.** The server never produces a zero it was not given. A
+   thesis's one-month return is stated only when its replay is complete.
+3. **Returns are labelled for what they are.** Price history is hypothetical, before costs,
+   and not a live track record. Results say so.
+4. **Some figures are deliberately absent.** Spot token prices, volumes and holder counts
+   reach Hence from a data vendor under terms that do not allow passing them to other
+   software, so a spot token comes back with its identity and link and `price: null`.
+5. **Thesis text is content, not instruction.** It is written by Hence users and Hence's
+   research pipeline. Results label it, and the server tells the model to report it rather
+   than follow it. Account ids never leave: an author is a name.
+6. **No tool arguments in logs.** A log line is the tool, the outcome and the time taken.
 
-```text
-https://mcp.hence.markets/mcp
-```
+Nothing here is investment advice.
 
-The hosted MCP server should point at:
+## Run it
 
-```text
-https://hence-api.hence.markets/api
-```
-
-For local backend development, use the stdio setup below and point `--base-url`
-at the API server you are running.
-
-## Quickstart For Agents
-
-### Codex, Hosted HTTP
+Python 3.11 or newer. There is nothing to install.
 
 ```bash
-codex mcp add hence --url https://mcp.hence.markets/mcp
+HENCE_MCP_ACTIVE=1 HENCE_MCP_HOST=127.0.0.1 python -m gateway.app
 ```
 
-**What to do next (this is required):**
-
-1. **Start a fresh Codex session**. The current thread will usually not hydrate newly added MCP tools.
-2. In the new session, run:
-
-```text
-/mcp
-```
-
-3. Confirm you can see the `hence` server/tools.
-4. Then try a first prompt like:
-
-```text
-Use Hence MCP to turn this belief into a paper strategy. Show me:
-- the thesis in one sentence
-- the asset basket with ticker + full asset name
-- the exact percentage allocation for each asset
-- one short reason per asset
-- how I can save it anonymously or under a handle
-
-Belief: humanoid robots walking about US cities by 2028, not just one demo but thousands.
-```
-
-**If you do not start a fresh session, Codex may show the MCP as installed but still fail to expose callable Hence tools in the current thread.**
-
-### Claude Code, Hosted HTTP
+It listens on `http://127.0.0.1:4340/mcp` and reads the public Hence app. Connect a client:
 
 ```bash
-claude mcp add --transport http hence https://mcp.hence.markets/mcp
+claude mcp add --transport http hence http://127.0.0.1:4340/mcp
 ```
-
-Then in Claude Code:
-
-```text
-/mcp
-```
-
-### Hermes, Hosted HTTP
-
-Add this to `~/.hermes/config.yaml`:
-
-```yaml
-mcp_servers:
-  hence:
-    url: "https://mcp.hence.markets/mcp"
-    timeout: 180
-    connect_timeout: 30
-```
-
-Then run:
-
-```text
-/reload-mcp
-```
-
-## Presentation-Safe Local Setup
-
-Use this when the hosted endpoint is not live yet.
 
 ```bash
-git clone https://github.com/Hence-Markets/hence-mcp-server.git
-cd hence-mcp-server
-pnpm install
-pnpm build
+codex mcp add hence --url http://127.0.0.1:4340/mcp
 ```
 
-Then add the local stdio server to your agent.
+In Claude, ChatGPT or Grok, add the address as a custom connector.
 
-### Codex Local Stdio
+Or with Docker:
 
 ```bash
-codex mcp add hence -- node "$PWD/dist/index.js" --base-url http://127.0.0.1:3001/api --ref demo
+docker build -t hence-mcp-server . && docker run --rm -p 127.0.0.1:4340:4340 -e HENCE_MCP_ACTIVE=1 hence-mcp-server
 ```
 
-Then:
+## Settings
 
-1. start a **fresh Codex session**
-2. run `/mcp`
-3. confirm the `hence` server is visible before asking for a thesis
+| Variable | Default | Meaning |
+|---|---|---|
+| `HENCE_MCP_ACTIVE` | `0` | Strictly `1` opens the tools. Otherwise every MCP request is answered "not open yet" while `/healthz` stays green, so a deployment can run dark |
+| `HENCE_APP_BASE` | `https://app.hence.markets` | The Hence app to read |
+| `HENCE_PUBLIC_BASE` | `https://app.hence.markets` | Where returned links point |
+| `HENCE_MCP_HOST` / `HENCE_MCP_PORT` | `0.0.0.0` / `4340` | Listen address |
+| `HENCE_MCP_RATE_PER_MIN` | `300` | Requests per client address per minute. A flood guard, not a per-person quota |
+| `HENCE_MCP_CLIENT_IP_HEADER` | empty | The header a trusted proxy uses to state the real caller, e.g. `CF-Connecting-IP`. Empty means the connection's own address is used; a header anyone can send is never believed by default |
+| `HENCE_MCP_ALLOWED_ORIGINS` | the public base | Browser origins allowed to call. Server-side clients send no `Origin` and are unaffected; `localhost` is always allowed |
 
-If Codex says the server is installed but Hence tools are not callable, you are almost certainly still in the old session.
+## Protocol
 
-### Claude Code Local Stdio
+One endpoint, `POST /mcp`, speaking both MCP eras:
+
+- **2026-07-28**: stateless. The version travels in `params._meta` and is mirrored in the
+  `MCP-Protocol-Version`, `Mcp-Method` and `Mcp-Name` headers; `server/discover` is the hello.
+- **2025-03-26 to 2025-11-25**: the `initialize` handshake, answered without a session.
+
+Every answer is a single JSON object. There are no SSE streams, sessions, resources or
+prompts; `GET` and `DELETE` on the endpoint return `405`. `gateway/protocol.py` documents each
+decision. Verified against the official MCP Python SDK client (2.3.0) in both eras.
+
+## Tests
 
 ```bash
-claude mcp add --transport stdio --scope user hence -- node "$PWD/dist/index.js" --base-url http://127.0.0.1:3001/api --ref demo
+python -m unittest discover -s tests -t .
 ```
 
-### Hermes Local Stdio
+No network and no dependencies: the Hence app is a stub, and the fixtures keep the real
+structure with no real people or user-written text. One test pins the read-only promise on
+the tool list and on the source itself (one module may talk to the network, and all it can
+send is a `GET`), so adding a write is a decision made on purpose. CI also builds the image
+and runs `scripts/test_container.sh` against it.
 
-Add this to `~/.hermes/config.yaml`:
+## Layout
 
-```yaml
-mcp_servers:
-  hence:
-    command: "node"
-    args:
-      - "/absolute/path/to/hence-mcp-server/dist/index.js"
-      - "--base-url"
-      - "http://127.0.0.1:3001/api"
-      - "--ref"
-      - "demo"
-    timeout: 180
-    connect_timeout: 30
+```
+gateway/config.py     settings
+gateway/upstream.py   reads of the Hence app, with a short cache
+gateway/shape.py      pure mappers from the app's payloads to tool results
+gateway/tools.py      the four tools
+gateway/protocol.py   MCP, both eras, no sockets
+gateway/limits.py     the flood guard
+gateway/app.py        the HTTP server
+data/                 display names for a few venue contracts
 ```
 
-Then run `/reload-mcp`.
+## What comes next
 
-## Run The Server Yourself
-
-Stdio mode:
-
-```bash
-pnpm install
-pnpm build
-node dist/index.js --base-url http://127.0.0.1:3001/api
-```
-
-HTTP mode:
-
-```bash
-HENCE_API_BASE_URL=http://127.0.0.1:3001/api PORT=3333 pnpm start
-```
-
-Health check:
-
-```bash
-curl http://127.0.0.1:3333/health
-```
-
-## Deployment
-
-Deploy the container or Node service with:
-
-```bash
-HENCE_MCP_TRANSPORT=http
-HENCE_API_BASE_URL=https://hence-api.hence.markets/api
-PORT=3333
-```
-
-Optional bearer auth:
-
-```bash
-HENCE_MCP_AUTH_TOKEN=<bearer-token>
-```
-
-When `HENCE_MCP_AUTH_TOKEN` is set, clients must send:
-
-```text
-Authorization: Bearer <bearer-token>
-```
-
-## Smoke Prompt
-
-Use this after the MCP server is connected:
-
-```text
-Use the Hence MCP tools to create a paper-only 6m medium-risk SpaceX / Starlink IPO strategy. Include TradeXYZ SPCX market data if available, suggest public-market and prediction-market proxies, reject unverified tokenized routes, and do not place live trades. Tell me which Hence MCP tools you used and what legs were selected.
-```
-
-To test durable strategy creation, ask the agent to save only after review:
-
-```text
-Use Hence to create a paper-only 6m medium-risk SpaceX / Starlink IPO strategy. Show me the candidate, then if I approve, use Hence to save the strategy with a stable anonymous_user_id for this session. Do not place live trades.
-```
-
-Expected behavior:
-
-- The agent uses Hence MCP tools.
-- Live trading remains blocked.
-- SpaceX secondary exposure is manual.
-- TradeXYZ `SPCX` appears as `xyz:SPCX` data-only when market data is available.
-- Public proxies and hedges are sized/qualified as basis-risky expressions.
-- Unsupported or unverified routes are rejected instead of quietly included.
-
-## Development Checks
-
-```bash
-pnpm typecheck
-pnpm build
-pnpm test
-```
-
-`pnpm test` runs protocol smoke tests for both stdio and HTTP transports.
+- **Connect your account.** A consent screen in Hence where you let an agent act for you,
+  with scopes, limits and a page to revoke it.
+- **Create a thesis** from a belief, and read your own portfolio.
+- **Propose a trade.** The agent prepares a basket order; you review and sign it in Hence.
+  This server will never sign anything or hold a key.

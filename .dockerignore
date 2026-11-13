@@ -1,7 +1,10 @@
-node_modules
-dist
 .git
+.github
 .env
-npm-debug.log*
-pnpm-debug.log*
-
+.env.*
+**/__pycache__
+*.pyc
+tests
+scripts
+README.md
+.DS_Store

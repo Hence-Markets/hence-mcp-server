@@ -1,0 +1,193 @@
+{
+ "_about": "Display names for venue contracts whose ticker is not a name (io:OAI -> OpenAI). Copied from the Hence app; display only. A missing entry means a market is shown by its ticker.",
+ "contracts": {
+  "io:ANTH": {
+   "name": "Anthropic",
+   "asset_class": "preipo"
+  },
+  "io:DRAM": {
+   "name": "Roundhill Memory ETF",
+   "asset_class": "index"
+  },
+  "io:EWY": {
+   "name": "Korea ETF",
+   "asset_class": "index"
+  },
+  "io:GPRO": {
+   "name": "GoPro",
+   "asset_class": "equity"
+  },
+  "io:IONQ": {
+   "name": "IonQ",
+   "asset_class": "equity"
+  },
+  "io:NBIS": {
+   "name": "Nebius",
+   "asset_class": "equity"
+  },
+  "io:OAI": {
+   "name": "OpenAI",
+   "asset_class": "preipo"
+  },
+  "io:PRL": {
+   "name": "PEARL",
+   "asset_class": "crypto"
+  },
+  "io:SNDK": {
+   "name": "SanDisk",
+   "asset_class": "equity"
+  },
+  "io:TCNT": {
+   "name": "Tencent",
+   "asset_class": "equity"
+  },
+  "io:XIAOMI": {
+   "name": "Xiaomi",
+   "asset_class": "equity"
+  },
+  "mkts:BVIV": {
+   "name": "Bitcoin implied volatility",
+   "asset_class": "volatility"
+  },
+  "mkts:SMALL2000": {
+   "name": "US small-cap equities",
+   "asset_class": "index"
+  },
+  "mkts:US500": {
+   "name": "US large-cap equities",
+   "asset_class": "index"
+  },
+  "mkts:USBOND": {
+   "name": "Long-duration US Treasury bonds",
+   "asset_class": "index"
+  },
+  "mkts:USTECH": {
+   "name": "US technology-heavy equities",
+   "asset_class": "index"
+  },
+  "para:10Y": {
+   "name": "US 10-year Treasury yield",
+   "asset_class": "rates"
+  },
+  "para:2Y": {
+   "name": "US 2-year Treasury yield",
+   "asset_class": "rates"
+  },
+  "para:30Y": {
+   "name": "US 30-year Treasury yield",
+   "asset_class": "rates"
+  },
+  "para:AAOI": {
+   "name": "Applied Optoelectronics",
+   "asset_class": "equity"
+  },
+  "para:ANSEM": {
+   "name": "Ansem",
+   "asset_class": "crypto"
+  },
+  "para:AVGO": {
+   "name": "Broadcom",
+   "asset_class": "equity"
+  },
+  "para:BTCD": {
+   "name": "Bitcoin dominance",
+   "asset_class": "index"
+  },
+  "para:CIEN": {
+   "name": "Ciena",
+   "asset_class": "equity"
+  },
+  "para:CIFR": {
+   "name": "Cipher Digital",
+   "asset_class": "equity"
+  },
+  "para:COHR": {
+   "name": "Coherent",
+   "asset_class": "equity"
+  },
+  "para:CRDO": {
+   "name": "Credo Technology",
+   "asset_class": "equity"
+  },
+  "para:CRWD": {
+   "name": "CrowdStrike",
+   "asset_class": "equity"
+  },
+  "para:GDX": {
+   "name": "Gold miners",
+   "asset_class": "index"
+  },
+  "para:GLW": {
+   "name": "Corning",
+   "asset_class": "equity"
+  },
+  "para:IGV": {
+   "name": "iShares Expanded Tech-Software Sector ETF",
+   "asset_class": "index"
+  },
+  "para:IREN": {
+   "name": "IREN",
+   "asset_class": "equity"
+  },
+  "para:LRCX": {
+   "name": "Lam Research",
+   "asset_class": "equity"
+  },
+  "para:MELI": {
+   "name": "MercadoLibre",
+   "asset_class": "equity"
+  },
+  "para:NET": {
+   "name": "Cloudflare",
+   "asset_class": "equity"
+  },
+  "para:OTHERS": {
+   "name": "Crypto market cap excluding top 10",
+   "asset_class": "index"
+  },
+  "para:RDDT": {
+   "name": "Reddit",
+   "asset_class": "equity"
+  },
+  "para:SMCI": {
+   "name": "Supermicro",
+   "asset_class": "equity"
+  },
+  "para:SMH": {
+   "name": "US Semiconductor 25 Continuous Index",
+   "asset_class": "index"
+  },
+  "para:SOFI": {
+   "name": "SoFi Technologies",
+   "asset_class": "equity"
+  },
+  "para:STX": {
+   "name": "Seagate",
+   "asset_class": "equity"
+  },
+  "para:TER": {
+   "name": "Teradyne",
+   "asset_class": "equity"
+  },
+  "para:TOTAL2": {
+   "name": "Crypto market cap excluding Bitcoin",
+   "asset_class": "index"
+  },
+  "para:TREAD": {
+   "name": "Tread.fi",
+   "asset_class": "crypto"
+  },
+  "para:TTWO": {
+   "name": "Take-Two Interactive",
+   "asset_class": "equity"
+  },
+  "para:UNITREE": {
+   "name": "Unitree Robotics",
+   "asset_class": "equity"
+  },
+  "para:VST": {
+   "name": "Vistra",
+   "asset_class": "equity"
+  }
+ }
+}
