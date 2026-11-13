@@ -1,0 +1,9 @@
+{
+  "name": "hence",
+  "version": "0.1.0",
+  "description": "Read Hence from your agent: public theses, tradable markets and your own account, through the Hence MCP server. Read-only: it cannot place a trade.",
+  "author": { "name": "Hence Markets", "url": "https://hence.markets" },
+  "homepage": "https://app.hence.markets",
+  "repository": "https://github.com/Hence-Markets/hence-mcp-server",
+  "keywords": ["hence", "markets", "theses", "mcp"]
+}
