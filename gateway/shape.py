@@ -370,3 +370,36 @@ def portfolio(data):
                  'Nothing here is investment advice.'),
     }
     return out
+
+
+def thesis_check(data):
+    """Hence's answer to a thesis the agent wrote, checked and passed on with what to do next.
+    None when it is not an answer. `ok` and `saved` are passed on only when they are booleans:
+    a missing verdict is not a pass."""
+    if not isinstance(data, dict) or not isinstance(data.get('ok'), bool) or not isinstance(data.get('saved'), bool):
+        return None
+    if not isinstance(data.get('problems'), list) or not isinstance(data.get('warnings'), list):
+        return None
+    problems = [{'field': text(p.get('field')) or '', 'problem': text(p.get('problem'), 400)} for p in data['problems']
+                if isinstance(p, dict) and text(p.get('problem'))]
+    if not data['ok'] and not problems:
+        return None                                  # "not ok" with no reason given is not an answer anyone can act on
+    if data['ok'] and problems or data['saved'] and not data['ok']:
+        return None
+    out = {'ok': data['ok'], 'saved': data['saved'], 'problems': problems,
+           'warnings': [text(w, 400) for w in data['warnings'] if isinstance(w, str) and text(w)]}
+    if isinstance(data.get('thesis'), dict):
+        out['thesis'] = data['thesis']
+    if data['saved']:
+        url, draft = text(data.get('url'), 400), text(data.get('draft_id'))
+        if not url or not draft:
+            return None                              # saved, but nowhere to send the person: not a save we can report
+        out.update(saved_as='draft', draft_id=draft, url=url, already_saved=data.get('already_saved') is True)
+        out['next'] = ('Saved as a private draft in the person\'s Hence library. Give them the url: they review it in Hence and '
+                       'save it there, and that save is what makes it their thesis. Hence has not researched it. Nothing was traded.')
+    elif data['ok']:
+        out['next'] = ('Nothing is saved yet. Show the person the thesis and its warnings. If they agree, call save_thesis_draft '
+                       'with the same object.')
+    else:
+        out['next'] = 'Nothing was saved. Fix every problem, then check again.'
+    return out

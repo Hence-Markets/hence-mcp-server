@@ -59,6 +59,16 @@ def real_account_answer(handle):
     return tools.get_my_account({}, None, _App(handle))
 
 
+PREVIEW = {'title': 'Overfunded buildout', 'topic': 'Other', 'horizon_days': 180, 'cash_weight_pct': 20.0, 'basket': 'Perps',
+           'holdings': [{'market_id': 'perp:xyz:NVDA', 'symbol': 'xyz:NVDA', 'name': 'NVDA', 'venue': 'Hyperliquid', 'side': 'short', 'weight_pct': 80.0, 'role': 'core'}]}
+
+
+def real_verdict(app_answer):
+    """A check or save answer as the SERVER'S OWN mapper passes it on."""
+    from gateway import shape
+    return shape.thesis_check(app_answer)
+
+
 class Hence:
     """Stands in for the MCP server and for Hence's sign-in service. Records every request."""
 
@@ -71,6 +81,10 @@ class Hence:
         self.revoked = []
         self.refresh_status = None            # force the token endpoint's answer for a refresh
         self.tool_error = None
+        self.theses = []                      # every thesis sent to be checked or saved
+        self.verdict = {'ok': True, 'saved': False, 'problems': [], 'warnings': ['No sources are cited.'], 'thesis': PREVIEW}
+        self.save_verdict = dict(self.verdict, saved=True, saved_as='draft', draft_id='d-1', already_saved=False,
+                                 url='https://app.hence.markets/#/thesis/create?draft=d-1')
         self.meta_resource = SERVER
         self.meta_issuer = ISSUER
         self.token_endpoint = ISSUER + '/api/oauth/token'
@@ -119,12 +133,17 @@ class Hence:
         if msg['method'] == 'tools/list':
             return self._json(200, {'jsonrpc': '2.0', 'id': 1, 'result': {'tools': [{'name': 'search_markets', 'title': 'Search Hence markets'}]}})
         name = msg['params']['name']
-        if name == 'get_my_account':
+        if name in ('get_my_account', 'check_thesis', 'save_thesis_draft'):
             token = headers.get('Authorization', '')[7:]
             if token not in self.good:
                 return self._json(401, {'jsonrpc': '2.0', 'id': 1, 'error': {'code': -32001, 'message': 'Sign in to Hence to use this.'}},
                                   {'www-authenticate': 'Bearer resource_metadata="x", scope="account:read"'})
-            return self._ok(real_account_answer('ivan'))
+            if name == 'get_my_account':
+                return self._ok(real_account_answer('ivan'))
+            self.theses.append((name, msg['params']['arguments']['thesis']))
+            return self._ok(real_verdict(self.verdict if name == 'check_thesis' else self.save_verdict))
+        if name == 'get_thesis_guide':
+            return self._ok(tools.get_thesis_guide({}, None))
         if self.tool_error:
             return self._json(200, {'jsonrpc': '2.0', 'id': 1, 'result': {'content': [{'type': 'text', 'text': self.tool_error}], 'isError': True}})
         return self._ok(MARKETS)
@@ -318,6 +337,93 @@ class SigningIn(Case):
         code, out, err = self.run_cli('login', browser=self.hence.browser())
         self.assertEqual((code, out), (1, ''))
         self.assertIn('not accepting sign-ins yet', err)
+
+
+class WritingAThesis(Case):
+    def file(self, thesis=None, text=None):
+        path = os.path.join(self.dir.name, 'thesis.json')
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(text if text is not None else json.dumps(thesis if thesis is not None else main.TEMPLATE))
+        return path
+
+    def run_draft(self, *argv, confirm=None):
+        out, err = io.StringIO(), io.StringIO()
+        code = main.run(['--server', SERVER] + list(argv), out=out, err=err, store=self.store, sender=self.hence, confirm=confirm)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_the_blank_thesis_is_one_the_format_accepts(self):
+        code, out, _ = self.run_cli('draft', 'new')
+        blank = json.loads(out)
+        self.assertEqual(code, 0)
+        props = tools.THESIS['properties']
+        self.assertLessEqual(set(tools.THESIS['required']), set(blank))
+        self.assertLessEqual(set(blank), set(props))
+        self.assertEqual(blank['format'], tools.THESIS_FORMAT)
+        self.assertEqual(sum(h['weight_pct'] for h in blank['holdings']) + blank['cash_weight_pct'], 100)
+        self.assertEqual(self.hence.requests, [])                      # no server needed to start writing
+
+    def test_the_guide_needs_no_account(self):
+        code, out, err = self.run_cli('guide')
+        self.assertEqual((code, err), (0, ''))
+        self.assertIn('# Writing a Hence thesis yourself', out)
+        self.assertEqual(self.hence.sent_tokens()[-1], None)
+
+    def test_check_shows_the_verdict_and_saves_nothing(self):
+        self.login()
+        code, out, _ = self.run_draft('draft', 'check', self.file())
+        self.assertEqual(code, 0)
+        for said in ('Overfunded buildout', 'xyz:NVDA', 'Hyperliquid', 'Worth knowing:', 'No sources are cited.', 'Nothing is saved yet'):
+            self.assertIn(said, out)
+        self.assertEqual([name for name, _ in self.hence.theses], ['check_thesis'])
+        self.assertEqual(self.hence.theses[0][1], main.TEMPLATE)
+
+    def test_a_thesis_with_problems_is_exit_1_and_is_never_saved(self):
+        self.login()
+        self.hence.verdict = {'ok': False, 'saved': False, 'problems': [{'field': 'title', 'problem': 'Required. Write the title.'}], 'warnings': []}
+        for argv in (['draft', 'check', self.file()], ['draft', 'save', self.file(), '--yes']):
+            code, out, _ = self.run_draft(*argv)
+            self.assertEqual(code, 1, argv)
+            self.assertIn('1 problem. Nothing was saved.', out)
+            self.assertIn('title: Required. Write the title.', out)
+        self.assertNotIn('save_thesis_draft', [name for name, _ in self.hence.theses])
+
+    def test_save_asks_first_and_no_is_no(self):
+        self.login()
+        asked = []
+        code, out, err = self.run_draft('draft', 'save', self.file(), confirm=lambda: asked.append(1) or False)
+        self.assertEqual((code, out, asked), (1, '', [1]))
+        self.assertIn('Not saved', err)
+        self.assertIn('xyz:NVDA', err)                                 # what would be saved was shown before the question
+        self.assertNotIn('save_thesis_draft', [name for name, _ in self.hence.theses])
+        # with no terminal to ask in, and no --yes, it does not save
+        out2, err2 = io.StringIO(), io.StringIO()
+        code = main.run(['--server', SERVER, 'draft', 'save', self.file()], out=out2, err=err2, store=self.store, sender=self.hence, stdin=io.StringIO(''))
+        self.assertEqual((code, out2.getvalue()), (1, ''))
+        self.assertNotIn('save_thesis_draft', [name for name, _ in self.hence.theses])
+
+    def test_yes_saves_the_same_thesis_that_was_checked_as_a_draft(self):
+        self.login()
+        code, out, _ = self.run_draft('draft', 'save', self.file(), confirm=lambda: True)
+        self.assertEqual(code, 0)
+        self.assertIn('Saved as a private draft: https://app.hence.markets/#/thesis/create?draft=d-1', out)
+        self.assertIn('Hence has not researched it', out)
+        self.assertEqual([name for name, _ in self.hence.theses], ['check_thesis', 'save_thesis_draft'])
+        self.assertEqual(self.hence.theses[0][1], self.hence.theses[1][1])
+        code, out, _ = self.run_draft('draft', 'save', self.file(), '--yes', '--json')
+        self.assertEqual((code, json.loads(out)['saved_as']), (0, 'draft'))
+
+    def test_a_file_that_is_not_a_thesis_is_said_before_anything_is_sent(self):
+        self.login()
+        before = len(self.hence.requests)
+        for path in (self.file(text='not json'), self.file(text='[1, 2]'), os.path.join(self.dir.name, 'missing.json')):
+            code, out, err = self.run_draft('draft', 'check', path)
+            self.assertEqual((code, out), (1, ''))
+        self.assertEqual(len(self.hence.requests), before)
+
+    def test_writing_needs_a_sign_in(self):
+        code, out, err = self.run_draft('draft', 'check', self.file())
+        self.assertEqual((code, out), (3, ''))
+        self.assertIn('hence login', err)
 
 
 class RefusedAnswers(Case):

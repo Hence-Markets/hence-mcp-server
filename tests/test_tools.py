@@ -21,7 +21,7 @@ SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'gateway')
 class ReadOnlyByConstruction(unittest.TestCase):
     def test_every_tool_declares_itself_a_read(self):
         self.assertEqual([t['name'] for t in tools.TOOLS],
-                         ['search_theses', 'get_thesis', 'get_featured_theses', 'search_markets'])
+                         ['search_theses', 'get_thesis', 'get_featured_theses', 'search_markets', 'get_thesis_guide'])
         for t in tools.TOOLS:
             a = t['annotations']
             self.assertIs(a['readOnlyHint'], True, t['name'])
@@ -68,17 +68,34 @@ class ReadOnlyByConstruction(unittest.TestCase):
         with open(os.path.join(SRC, 'appauth.py'), encoding='utf-8') as f:
             code = f.read()
         calls = re.findall(r"self\._call\(([^)]*)\)", code)
-        self.assertEqual(calls, ["'POST', INTROSPECT, '', body", "'GET', target, grant, None"])       # one write-free verb, no body
+        # asking who a token is; SENDING a thesis the agent wrote (two paths, below); reading
+        self.assertEqual(calls, ["'POST', INTROSPECT, '', body", "'POST', path, grant, body", "'GET', target, grant, None"])
+        # The one thing this server sends under a person's connection is a thesis the agent
+        # wrote, to be checked or to be put in their library as a private DRAFT. Neither path
+        # creates a thesis, publishes one or touches money. A third path here is a decision.
+        self.assertEqual(appauth.WRITE_PATHS, ('/api/agents/v1/theses/check', '/api/agents/v1/theses/drafts'))
+        self.assertIn("if path not in WRITE_PATHS:\n            raise ValueError", code)
+        self.assertLess(code.index('if path not in WRITE_PATHS:'), code.index("self._call('POST', path, grant, body)"))
+        for path in appauth.WRITE_PATHS:
+            self.assertNotRegex(path, r'(trade|order|exchange|fill|withdraw|transfer|deposit|fund|sign|publish|visibility)')
         self.assertIn("if not allowed(path):\n            raise ValueError", code)
         self.assertLess(code.index('if not allowed(path):'), code.index("self._call('GET', target, grant, None)"))
 
-    def test_signed_in_tools_are_reads_too_and_name_their_permission(self):
+    def test_signed_in_tools_read_except_the_one_that_saves_a_draft(self):
+        writers = [t['name'] for t in tools.ACCOUNT_TOOLS if t['annotations']['readOnlyHint'] is not True]
+        self.assertEqual(writers, ['save_thesis_draft'])            # a second tool that writes is a decision made here
         for t in tools.ACCOUNT_TOOLS:
-            self.assertIs(t['annotations']['readOnlyHint'], True, t['name'])
             self.assertIs(t['annotations']['destructiveHint'], False, t['name'])
-            self.assertNotRegex(t['name'], r'(trade|order|buy|sell|withdraw|transfer|send|deposit|fund|create|approve|sign)')
-            self.assertRegex(t['scope'], r'^[a-z]+:read$')          # every permission a tool here needs is a read
+            self.assertNotRegex(t['name'], r'(trade|order|buy|sell|withdraw|transfer|send|deposit|fund|create|approve|sign|publish)')
+            # a permission is a read, or the one that saves drafts
+            self.assertRegex(t['scope'], r'^([a-z]+:read|theses:write)$')
             self.assertNotIn('scope', tools.public_definition(t))
+        # the tool that writes says what it does not do, and a host is told to ask before running it
+        save = tools.find('save_thesis_draft') or next(t for t in tools.ACCOUNT_TOOLS if t['name'] == 'save_thesis_draft')
+        self.assertEqual(save['scope'], 'theses:write')
+        for said in ('private draft', 'does not create, publish or trade', 'the person has seen the thesis and agreed', 'not by Hence'):
+            self.assertIn(said, save['description'])
+        self.assertIs(next(t for t in tools.ACCOUNT_TOOLS if t['name'] == 'check_thesis')['annotations']['readOnlyHint'], True)
 
     def test_the_public_definition_hides_the_handler(self):
         d = tools.public_definition(tools.TOOLS[0])

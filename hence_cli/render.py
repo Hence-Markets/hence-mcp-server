@@ -215,6 +215,36 @@ def portfolio(value):
     return '\n'.join(out) + ('\n\n' + extra if extra else '')
 
 
+def check(value):
+    """`check_thesis` and `save_thesis_draft`: Hence's verdict on a thesis the agent wrote."""
+    out = []
+    problems = [p for p in value.get('problems') or [] if isinstance(p, dict)]
+    if problems:
+        out.append('%d problem%s. Nothing was saved.' % (len(problems), '' if len(problems) == 1 else 's'))
+        out += ['  %s%s' % ((p.get('field') + ': ') if p.get('field') else '', text(p.get('problem'))) for p in problems]
+    preview = value.get('thesis') if isinstance(value.get('thesis'), dict) else None
+    if preview and not problems:
+        out.append('%s  (%s, %s days, %s)' % (text(preview.get('title')), text(preview.get('topic')), preview.get('horizon_days', NA), text(preview.get('basket'))))
+        rows = [[text(h.get('symbol')), text(h.get('name')), text(h.get('side')),
+                 ('%g%%' % h['weight_pct']) if isinstance(h.get('weight_pct'), (int, float)) else NA, text(h.get('venue')), text(h.get('role'))]
+                for h in preview.get('holdings') or [] if isinstance(h, dict)]
+        out.append(table(rows, ['holding', 'name', 'side', 'weight', 'venue', 'role']))
+        cash = preview.get('cash_weight_pct')
+        out.append('cash: %s' % (('%g%%' % cash) if isinstance(cash, (int, float)) else NA))
+    warnings = [w for w in value.get('warnings') or [] if isinstance(w, str)]
+    if warnings:
+        out.append('\nWorth knowing:')
+        out += ['  - ' + w for w in warnings]
+    if value.get('saved') is True:
+        out.append('\n%s as a private draft: %s' % ('Updated' if value.get('already_saved') else 'Saved', text(value.get('url'))))
+    extra = footer(value, {'ok', 'saved', 'problems', 'warnings', 'thesis', 'saved_as', 'draft_id', 'url', 'already_saved'})
+    return '\n'.join(out) + ('\n\n' + extra if extra else '')
+
+
+def guide(value):
+    return value.get('guide') if isinstance(value.get('guide'), str) else json.dumps(value, indent=2, ensure_ascii=False)
+
+
 def tools(found):
     rows = [[t.get('name', ''), (t.get('title') or '')] for t in found if isinstance(t, dict)]
     return table(rows, ['tool', 'what it does'])
@@ -222,7 +252,7 @@ def tools(found):
 
 VIEWS = {'search_theses': theses, 'get_featured_theses': lambda v: theses(v, with_return=True), 'get_thesis': thesis,
          'search_markets': markets, 'get_my_account': account, 'list_my_theses': my_theses, 'get_my_thesis': my_thesis,
-         'get_my_portfolio': portfolio}
+         'get_my_portfolio': portfolio, 'get_thesis_guide': guide, 'check_thesis': check, 'save_thesis_draft': check}
 
 
 def show(tool, value, as_json=False):

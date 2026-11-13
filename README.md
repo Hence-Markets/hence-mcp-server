@@ -9,10 +9,12 @@ spot tokens and outcome markets, and tracks it. This server is a small
 [Model Context Protocol](https://modelcontextprotocol.io) server (Streamable HTTP) in front of
 the Hence app.
 
-**This version is read-only.** It holds no key to anyone's money and no database. Its public
-tools read what the Hence app already shows a signed-out visitor. A person can also connect
-their Hence account, and then one more tool reads their username. It cannot create an account,
-a thesis or a trade; to act on anything, a person opens the returned link in Hence.
+**It reads, and it can leave a draft.** It holds no key to anyone's money and no database. Its
+public tools read what the Hence app already shows a signed-out visitor. A person can also
+connect their Hence account; then it can read their own theses and positions, and put a
+thesis the agent wrote into their library as a private draft for them to review. It cannot
+create an account, publish a thesis, place a trade or move money; to act on anything, a
+person opens the returned link in Hence.
 
 > This replaces the earlier TypeScript server (v0.1), which wrapped a previous Hence API that
 > no longer exists. Its tool names (`hence_start_market_workflow` and the rest) are gone.
@@ -25,8 +27,9 @@ a thesis or a trade; to act on anything, a person opens the returned link in Hen
 | `get_thesis` | One thesis: the claim, holdings with weights and reasons, other baskets, sources, checkpoints, and a price history |
 | `get_featured_theses` | Today's featured selection |
 | `search_markets` | What trades on Hence and where: perpetuals with live price, funding and open interest, and Robinhood Chain spot tokens |
+| `get_thesis_guide` | How to write a Hence thesis yourself: the method and the `hence-thesis/1` format |
 
-With sign-in switched on there are four more, each reading only the connected person's own account:
+With sign-in switched on there are six more, each touching only the connected person's own account:
 
 | Tool | What it reads | Needs |
 |---|---|---|
@@ -34,9 +37,28 @@ With sign-in switched on there are four more, each reading only the connected pe
 | `list_my_theses` | Their theses: written, saved, followed, held on paper or archived, private ones included | `theses:read` |
 | `get_my_thesis` | One of them in full, with versions and a price history | `theses:read` |
 | `get_my_portfolio` | Open perpetual positions read live, realized trading results, and the last account value Hence recorded. It says what it does not include (cash, spot balances, outcome positions) | `portfolio:read` |
+| `check_thesis` | Hence's verdict on a thesis the agent wrote: every problem at once, warnings, and the thesis as Hence would store it. Saves nothing | `theses:write` |
+| `save_thesis_draft` | Puts that thesis in the person's Hence library as a private draft. The only tool that writes | `theses:write` |
 
 Few tools on purpose. A caller pays for every tool description on every turn; the whole list
 is about a thousand tokens.
+
+## Writing the thesis yourself
+
+An agent does not have to ask Hence to research an idea. It can do the thinking itself, with
+its own model and sources, and hand Hence the result:
+
+1. `get_thesis_guide` gives the method and the format (`skills/hence/write-a-thesis.md` is the
+   same text).
+2. `search_markets` finds each holding; its `market_id` goes into the thesis unchanged.
+3. `check_thesis` returns every problem at once. Holdings are matched to Hence's own listings,
+   and their names and venues come from Hence, not from the agent.
+4. The agent shows the person the thesis. If they agree, `save_thesis_draft` puts it in their
+   Hence library as a private draft, labelled as written by that agent.
+5. The person opens the draft in Hence, changes what they want and saves it. That save is
+   what makes it a thesis. Nothing an agent sends becomes one on its own.
+
+This costs Hence no research run, and the person gets a basket shaped to what they asked for.
 
 ## The `hence` command
 
@@ -56,6 +78,10 @@ hence whoami
 hence my theses                     # your own theses, private ones included
 hence my thesis <id or link>        # one of them in full
 hence portfolio                     # your open positions and trading results
+hence guide                         # how to write a Hence thesis yourself
+hence draft new > thesis.json       # a blank thesis to fill in
+hence draft check thesis.json       # what is wrong with it; nothing is saved
+hence draft save thesis.json        # save it as a private draft (asks first; --yes to skip)
 hence tools                         # everything the server offers right now
 hence call <tool> --arg key=value   # any tool by name
 ```

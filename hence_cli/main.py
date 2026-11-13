@@ -8,6 +8,10 @@
     hence my theses                  your own theses, private ones included
     hence my thesis <id or link>     one of them in full
     hence portfolio                  your open positions and trading results
+    hence guide                      how to write a Hence thesis yourself
+    hence draft new > thesis.json    a blank thesis to fill in
+    hence draft check thesis.json    what is wrong with it (nothing is saved)
+    hence draft save thesis.json     save it to your Hence library as a private draft
     hence tools                      everything the server offers right now
     hence call <tool> --arg k=v      any tool, including ones newer than this release
 
@@ -74,6 +78,16 @@ def _parser():
     portfolio = sub.add_parser('portfolio', help='your open positions and trading results (needs hence login)', parents=[common])
     portfolio.add_argument('--days', type=int, help='window for the per-market results (1 to 365)')
 
+    sub.add_parser('guide', help='how to write a Hence thesis yourself', parents=[common])
+    draft = sub.add_parser('draft', help='a thesis you wrote: check it, or save it as a draft (needs hence login)', parents=[common])
+    dsub = draft.add_subparsers(dest='what', metavar='new|check|save')
+    dsub.add_parser('new', help='print a blank thesis to fill in', parents=[common])
+    for name, text in (('check', 'what is wrong with it; nothing is saved'), ('save', 'save it to your Hence library as a private draft')):
+        one_draft = dsub.add_parser(name, help=text, parents=[common])
+        one_draft.add_argument('file', help='the thesis as JSON, or - to read it from standard input')
+        if name == 'save':
+            one_draft.add_argument('--yes', action='store_true', help='do not ask before saving')
+
     sub.add_parser('login', help='connect this terminal to your Hence account', parents=[common])
     sub.add_parser('logout', help='disconnect this terminal', parents=[common])
     sub.add_parser('whoami', help='the Hence account this terminal is connected to', parents=[common])
@@ -117,6 +131,8 @@ def _arguments(ns):
         raise CliError('Say `hence my theses` or `hence my thesis <id>`.')
     if ns.command == 'portfolio':
         return 'get_my_portfolio', some(history_days=ns.days)
+    if ns.command == 'guide':
+        return 'get_thesis_guide', {}
     if ns.command == 'call':
         args = {}
         if ns.json_args:
@@ -136,6 +152,43 @@ def _arguments(ns):
                 args[key] = raw
         return ns.tool, args
     raise CliError('Unknown command.')
+
+
+TEMPLATE = {
+    'format': 'hence-thesis/1',
+    'title': 'The claim, in one line',
+    'summary': 'If X, then Y.',
+    'mechanism': 'How the claim becomes a price move, and why the market has not priced it.',
+    'why_now': 'The dated events that will show whether it is right.',
+    'counter_case': 'The strongest argument against it.',
+    'invalidation': 'What would prove it wrong.',
+    'horizon_days': 180,
+    'topic': 'AI & compute',
+    'cash_weight_pct': 20,
+    'holdings': [
+        {'market_id': 'perp:BTC', 'side': 'long', 'weight_pct': 80, 'role': 'core', 'reason': 'What it is, its role, and why this side.'},
+    ],
+    'sources': [{'title': 'What you read', 'url': 'https://example.com/the-page', 'publisher': 'Who published it', 'published_at': '2026-01-31'}],
+    'checkpoints': [{'by': '2027-01-31', 'observable': 'What to look for', 'direction': 'supports'}],
+}
+
+
+def _read_thesis(path, stdin):
+    try:
+        if path == '-':
+            raw = stdin.read()
+        else:
+            with open(path, encoding='utf-8') as f:
+                raw = f.read()
+    except OSError as e:
+        raise CliError('"%s" could not be read (%s).' % (path, e.strerror or e.__class__.__name__))
+    try:
+        thesis = json.loads(raw)
+    except ValueError as e:
+        raise CliError('"%s" is not valid JSON (%s).' % (path, e))
+    if not isinstance(thesis, dict):
+        raise CliError('"%s" must hold one JSON object: the thesis.' % path)
+    return thesis
 
 
 def _call_signed_in(server, tool, args, store, sender):
@@ -163,7 +216,7 @@ def _call_signed_in(server, tool, args, store, sender):
             return Client(server, token=token, **kw).call(tool, args)
 
 
-def run(argv, out=None, err=None, store=None, sender=None, open_browser=None):
+def run(argv, out=None, err=None, store=None, sender=None, open_browser=None, stdin=None, confirm=None):
     """The command, with its edges injectable for tests. Returns the exit code."""
     out, err = out or sys.stdout, err or sys.stderr
     parser = _parser()
@@ -198,6 +251,26 @@ def run(argv, out=None, err=None, store=None, sender=None, open_browser=None):
             found = Client(server, **kw).tools()
             print(json.dumps(found, indent=2, ensure_ascii=False) if ns.json else render.tools(found), file=out)
             return 0
+        if ns.command == 'draft':
+            if ns.what == 'new':
+                print(json.dumps(TEMPLATE, indent=2), file=out)
+                return 0
+            if ns.what not in ('check', 'save'):
+                raise CliError('Say `hence draft new`, `hence draft check <file>` or `hence draft save <file>`.')
+            thesis = _read_thesis(ns.file, stdin or sys.stdin)
+            verdict = _call_signed_in(server, 'check_thesis', {'thesis': thesis}, store, sender)
+            if ns.what == 'check' or verdict.get('ok') is not True:
+                print(render.show('check_thesis', verdict, as_json=ns.json), file=out)
+                return 0 if verdict.get('ok') is True else 1         # a thesis with problems is a failed check
+            if not getattr(ns, 'yes', False):
+                # the person sees exactly what will be saved, and says yes, before anything is
+                print(render.show('check_thesis', verdict), file=err)
+                ask = confirm or (lambda: (stdin or sys.stdin).isatty() and input('Save this as a private draft in your Hence library? [y/N] ').strip().lower() in ('y', 'yes'))
+                if not ask():
+                    raise CliError('Not saved. To save without being asked, add --yes.')
+            saved = _call_signed_in(server, 'save_thesis_draft', {'thesis': thesis}, store, sender)
+            print(render.show('save_thesis_draft', saved, as_json=ns.json), file=out)
+            return 0 if saved.get('saved') is True else 1
         tool, args = _arguments(ns)
         try:
             value = _call_signed_in(server, tool, args, store, sender)

@@ -105,7 +105,7 @@ class Permissions(Case):
         self.assertEqual(app.read, [])                                # nothing was read on the way to a refusal
 
     def test_the_sign_in_metadata_lists_every_permission_a_tool_needs(self):
-        self.assertEqual(protocol.resource_metadata()['scopes_supported'], ['account:read', 'portfolio:read', 'theses:read'])
+        self.assertEqual(protocol.resource_metadata()['scopes_supported'], ['account:read', 'portfolio:read', 'theses:read', 'theses:write'])
 
     def test_no_tool_can_name_an_account_or_a_wallet(self):
         for t in tools.ACCOUNT_TOOLS:

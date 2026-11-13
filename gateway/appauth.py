@@ -42,8 +42,12 @@ INTROSPECT = '/api/agents/v1/introspect'
 ACCOUNT_PATHS = ('/api/agents/v1/whoami', '/api/agents/v1/theses', '/api/agents/v1/portfolio')
 _ID = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 ACCOUNT_PATTERNS = (re.compile(r'^/api/agents/v1/theses/%s(/performance)?$' % _ID),)
+# The only two things this server may SEND under a connection: a thesis the agent wrote, to be
+# checked, and the same thesis to be put in the person's library as a private draft. Neither
+# creates a thesis, publishes one or touches money; the person saves the draft themselves.
+WRITE_PATHS = ('/api/agents/v1/theses/check', '/api/agents/v1/theses/drafts')
 # what Hence may answer "no" with, in words meant for the person's agent
-REFUSALS = (400, 403, 404, 409, 422)
+REFUSALS = (400, 403, 404, 409, 413, 422)
 
 
 def allowed(path):
@@ -171,13 +175,24 @@ class AppAuth:
             with self._lock:
                 self._cache.pop(hashlib.sha256(token.encode('utf-8')).hexdigest(), None)
 
+    def post(self, grant, path, payload):
+        """Send `payload` under a connection. Only the paths in WRITE_PATHS can be sent to. The
+        body is part of what is signed."""
+        if path not in WRITE_PATHS:
+            raise ValueError('not a path this server may send to')
+        body = json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode()
+        return self._answer(*self._call('POST', path, grant, body))
+
     def get(self, grant, path, query=None):
         """Read `path` under a connection. Only the paths listed above can be asked for. The
         query is part of what is signed: the app verifies the whole request target."""
         if not allowed(path):
             raise ValueError('not an account path')
         target = path + ('?' + urllib.parse.urlencode([(k, str(v)) for k, v in query.items()]) if query else '')
-        status, data, headers = self._call('GET', target, grant, None)
+        return self._answer(*self._call('GET', target, grant, None))
+
+    @staticmethod
+    def _answer(status, data, headers):
         error = (data or {}).get('error')
         if status == 200 and data is not None:
             return data

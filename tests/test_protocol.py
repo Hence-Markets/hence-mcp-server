@@ -60,7 +60,7 @@ class Modern(Base):
         self.assertEqual(r['supportedVersions'][0], V)
         self.assertEqual(r['capabilities'], {'tools': {'listChanged': False}})
         self.assertEqual(r['_meta']['io.modelcontextprotocol/serverInfo']['name'], 'hence')
-        self.assertIn('read-only', r['instructions'])
+        self.assertIn('Nothing here creates an account, publishes a thesis, places a trade or moves money', r['instructions'])
         self.assertEqual((r['cacheScope'], isinstance(r['ttlMs'], int)), ('public', True))
 
     def test_tools_list_is_cacheable_and_stable(self):

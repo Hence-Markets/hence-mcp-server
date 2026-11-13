@@ -57,7 +57,7 @@ def call(method, params, name=None):
     req = urllib.request.Request(url, data=json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params}).encode(), headers=headers)
     return json.loads(urllib.request.urlopen(req, timeout=30).read())['result']
 tools = call('tools/list', {})['tools']
-assert [t['name'] for t in tools] == ['search_theses', 'get_thesis', 'get_featured_theses', 'search_markets'], tools
+assert [t['name'] for t in tools] == ['search_theses', 'get_thesis', 'get_featured_theses', 'search_markets', 'get_thesis_guide'], tools
 assert all(t['annotations']['readOnlyHint'] is True for t in tools)
 for name, args in (('search_markets', {'kind': 'perp'}), ('search_theses', {}), ('get_featured_theses', {})):
     r = call('tools/call', {'name': name, 'arguments': args}, name)
