@@ -55,19 +55,29 @@ class ReadOnlyByConstruction(unittest.TestCase):
         self.assertNotRegex(requests_made[0], r"\bmethod\s*=")
         # the signed-in half reaches exactly these, and every one of them is a read of the person's own account
         self.assertEqual(appauth.INTROSPECT, '/api/agents/v1/introspect')
-        self.assertEqual(appauth.ACCOUNT_PATHS, ('/api/agents/v1/whoami',))
+        self.assertEqual(appauth.ACCOUNT_PATHS, ('/api/agents/v1/whoami', '/api/agents/v1/theses', '/api/agents/v1/portfolio'))
+        self.assertEqual([p.pattern for p in appauth.ACCOUNT_PATTERNS],
+                         [r'^/api/agents/v1/theses/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(/performance)?$'])
+        ok = '11111111-1111-4111-8111-111111111111'
+        for good in ('/api/agents/v1/whoami', '/api/agents/v1/theses/' + ok, '/api/agents/v1/theses/%s/performance' % ok):
+            self.assertTrue(appauth.allowed(good), good)
+        for bad in ('/api/me', '/api/exchange', '/api/agents/v1/introspect', '/api/agents/v1/theses/' + ok + '/../../me',
+                    '/api/agents/v1/theses/x', '/api/agents/v1/portfolio?wallet=0x1', '/api/agents/v1/theses/%s/tracking' % ok,
+                    '/api/agents/v1/whoami/', None, 7):
+            self.assertFalse(appauth.allowed(bad), bad)
         with open(os.path.join(SRC, 'appauth.py'), encoding='utf-8') as f:
             code = f.read()
         calls = re.findall(r"self\._call\(([^)]*)\)", code)
-        self.assertEqual(calls, ["'POST', INTROSPECT, '', body", "'GET', path, grant, None"])
-        self.assertIn("if path not in ACCOUNT_PATHS:\n            raise ValueError", code)
+        self.assertEqual(calls, ["'POST', INTROSPECT, '', body", "'GET', target, grant, None"])       # one write-free verb, no body
+        self.assertIn("if not allowed(path):\n            raise ValueError", code)
+        self.assertLess(code.index('if not allowed(path):'), code.index("self._call('GET', target, grant, None)"))
 
     def test_signed_in_tools_are_reads_too_and_name_their_permission(self):
         for t in tools.ACCOUNT_TOOLS:
             self.assertIs(t['annotations']['readOnlyHint'], True, t['name'])
             self.assertIs(t['annotations']['destructiveHint'], False, t['name'])
             self.assertNotRegex(t['name'], r'(trade|order|buy|sell|withdraw|transfer|send|deposit|fund|create|approve|sign)')
-            self.assertEqual(t['scope'], 'account:read')
+            self.assertRegex(t['scope'], r'^[a-z]+:read$')          # every permission a tool here needs is a read
             self.assertNotIn('scope', tools.public_definition(t))
 
     def test_the_public_definition_hides_the_handler(self):

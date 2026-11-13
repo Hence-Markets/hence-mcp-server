@@ -107,8 +107,8 @@ class _Account:
     def __init__(self, auth, grant):
         self._auth, self._grant = auth, grant
 
-    def get(self, path):
-        return self._auth.get(self._grant, path)
+    def get(self, path, query=None):
+        return self._auth.get(self._grant, path, query)
 
 
 def _refusal(sentence):
@@ -162,6 +162,11 @@ def _call_tool(params, upstream, log, headers=None, auth=None):
     except appauth.Busy as e:
         outcome = 'busy'
         result = _refusal('Too many requests for this account. Try again in %s seconds.' % e.retry_after)
+    except appauth.Refused as e:
+        # Hence's own sentence ("This thesis is private or is no longer available."). It is an
+        # answer the agent should pass on, not something to retry.
+        outcome = 'refused:%s' % e.code
+        result = _refusal(str(e))
     except appauth.Unavailable as e:
         outcome = 'unavailable'
         result = _refusal('%s. Your account was not read; try again shortly.' % e)

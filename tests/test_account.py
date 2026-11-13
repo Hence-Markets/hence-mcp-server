@@ -57,8 +57,8 @@ class StubAuth:
             raise self.connection_answer
         return self.connection_answer
 
-    def get(self, grant, path):
-        self.read.append((grant, path))
+    def get(self, grant, path, query=None):
+        self.read.append((grant, path) if query is None else (grant, path, dict(query)))
         if isinstance(self.whoami_answer, BaseException):
             raise self.whoami_answer
         return self.whoami_answer
@@ -81,7 +81,7 @@ class SwitchedOnOnlyWhenConfigured(Env):
         return [t['name'] for t in out['result']['tools']]
 
     def test_the_account_tool_is_listed_only_with_the_switch_and_the_secret(self):
-        self.assertEqual(self.names()[-1], 'get_my_account')
+        self.assertEqual(self.names()[4:], ['get_my_account', 'list_my_theses', 'get_my_thesis', 'get_my_portfolio'])
         self.assertEqual(self.names()[:4], [t['name'] for t in tools.TOOLS])            # public tools keep their order
         for change in ({'HENCE_MCP_ACCOUNTS': '0'}, {'HENCE_MCP_ACCOUNTS': 'true'}, {'HENCE_MCP_GATEWAY_SECRET': ''}, {'HENCE_MCP_GATEWAY_SECRET': 'x' * 31}):
             with mock.patch.dict(os.environ, change):
@@ -324,7 +324,7 @@ class Served(Env):
             status, headers, body = self.request('GET', path)
             self.assertEqual(status, 200, path)
             self.assertEqual(body, {'resource': 'https://mcp.hence.markets/mcp', 'authorization_servers': ['https://app.hence.markets'],
-                                    'scopes_supported': ['account:read'], 'bearer_methods_supported': ['header'], 'resource_name': 'Hence'})
+                                    'scopes_supported': ['account:read', 'portfolio:read', 'theses:read'], 'bearer_methods_supported': ['header'], 'resource_name': 'Hence'})
             self.assertEqual(headers['cache-control'], 'public, max-age=300')
         self.assertEqual(self.request('GET', '/.well-known/oauth-protected-resource/other')[0], 404)
         with mock.patch.dict(os.environ, {'HENCE_MCP_ACCOUNTS': '0'}):

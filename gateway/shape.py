@@ -213,6 +213,13 @@ def thesis_detail(d, public_base, with_paper=False):
     }
 
 
+def _count(v):
+    """How many: the public read sends the delayed holdings as a list, the signed read as a count."""
+    if isinstance(v, int) and not isinstance(v, bool):
+        return max(0, v)
+    return len(v) if isinstance(v, list) else 0
+
+
 def performance(p, period_days):
     """The replay of a basket over a window. Figures are stated only as the app computed them;
     `complete` false means some holdings had no price history for the whole window."""
@@ -237,7 +244,7 @@ def performance(p, period_days):
     if latest and num(latest.get('return_pct')) is not None:
         out['latest'] = {'at': text(latest.get('at')), 'return_pct': num(latest.get('return_pct'), 2),
                          'live': latest.get('live') is True,
-                         'delayed_holdings': len(latest.get('delayed') or [])}
+                         'delayed_holdings': _count(latest.get('delayed'))}
     return out
 
 
@@ -302,3 +309,64 @@ def match_score(query, symbol, name):
     if q in s:
         return 30
     return 0
+
+
+# ── the person's own account ────────────────────────────────────────────────────────────────
+
+def ownership(row):
+    """What only makes sense for a thesis read as the person: is it theirs, who can see it, and
+    where it stands. The service calls a public thesis 'local'; an agent is told 'public'."""
+    rel = row.get('relationship') if isinstance(row.get('relationship'), dict) else {}
+    return {
+        'yours': row.get('is_owner') is True,
+        'visibility': {'local': 'public', 'private': 'private'}.get(row.get('visibility')),
+        'status': text(row.get('assessment')),
+        'saved': rel.get('saved') is True,
+        'archived': rel.get('archived') is True,
+        'research_in_progress': row.get('research_pending') is True,
+    }
+
+
+def my_thesis_card(row, public_base):
+    card = thesis_card(row, public_base)
+    card.update(ownership(row))
+    return card
+
+
+_POSITION = ('wallet', 'venue', 'coin', 'side', 'size', 'entry_price', 'value_usd', 'unrealized_pnl_usd', 'margin_used_usd',
+             'leverage', 'margin_mode', 'liquidation_price')
+
+
+def portfolio(data):
+    """The app's portfolio answer, checked and passed on. None when it is not one. Nothing is
+    summed or filled in here: what the app could not read stays null and stays named."""
+    if not isinstance(data, dict):
+        return None
+    pos = data.get('positions')
+    if not isinstance(pos, dict) or not isinstance(data.get('unavailable'), list) or not isinstance(data.get('not_included'), list):
+        return None
+    listed = pos.get('positions')
+    if listed is not None and not isinstance(listed, list):
+        return None
+    unread = [u for u in pos.get('unread') or [] if isinstance(u, dict)]
+    out = {
+        'open_positions': None if listed is None else [{k: p.get(k) for k in _POSITION} for p in listed if isinstance(p, dict)],
+        'positions': {
+            'complete': pos.get('complete') is True,
+            'could_not_read': [{'wallet': text(u.get('wallet')), 'venue': text(u.get('venue'))} for u in unread],
+            'wallets_owned': num(pos.get('wallets_owned')), 'wallets_read': num(pos.get('wallets_read')),
+            'wallets_not_read': num(pos.get('wallets_not_read')), 'truncated': pos.get('truncated') is True,
+        },
+        'trading_results': data.get('history') if isinstance(data.get('history'), dict) else None,
+        'trading_results_days': num(data.get('history_days')),
+        'last_recorded_value': data.get('last_recorded_value') if isinstance(data.get('last_recorded_value'), dict) else None,
+        'unavailable': [text(u) for u in data['unavailable'] if isinstance(u, str)],
+        'not_included': [text(n, 300) for n in data['not_included'] if isinstance(n, str)],
+        'as_of_ms': num(data.get('as_of_ms')),
+        'note': ('This is not the whole portfolio: see not_included. open_positions is null when positions could not be read at all, '
+                 'and positions.complete is false when some wallet or venue could not be read. Trading results are realized results '
+                 'from recorded fills; if trading_results.has_history is false, nothing has been recorded and the zeros mean nothing. '
+                 'last_recorded_value is what the Hence app last stored, at recorded_at_ms: it is not the value now. '
+                 'Nothing here is investment advice.'),
+    }
+    return out

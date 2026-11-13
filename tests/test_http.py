@@ -84,8 +84,20 @@ class Served(unittest.TestCase):
         self.assertEqual(self.call('tools/list')[0], 200)                    # no Origin: a server-side client
 
     def test_an_oversized_body_is_refused(self):
-        status, _, _ = self.request('POST', '/mcp', b'x' * (config.MAX_BODY_BYTES + 1), {'Content-Type': 'application/json'})
-        self.assertEqual(status, 413)
+        # The server refuses on the DECLARED length, before reading a byte of the body. So send
+        # only the headers: writing the whole body raced the server's close and, on a busy
+        # machine, the test died with a connection reset instead of reading the 413.
+        import socket
+        with socket.create_connection(('127.0.0.1', self.port), timeout=10) as sock:
+            sock.sendall(('POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n'
+                          'Content-Length: %d\r\n\r\n' % (config.MAX_BODY_BYTES + 1)).encode())
+            answer = b''
+            while b'\r\n' not in answer:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                answer += chunk
+        self.assertEqual(answer.split(b'\r\n')[0].split(b' ')[1], b'413')
 
     def test_unknown_paths(self):
         self.assertEqual(self.request('GET', '/api/me')[0], 404)

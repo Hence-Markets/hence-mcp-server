@@ -26,14 +26,75 @@ a thesis or a trade; to act on anything, a person opens the returned link in Hen
 | `get_featured_theses` | Today's featured selection |
 | `search_markets` | What trades on Hence and where: perpetuals with live price, funding and open interest, and Robinhood Chain spot tokens |
 
-With sign-in switched on there is a fifth:
+With sign-in switched on there are four more, each reading only the connected person's own account:
 
 | Tool | What it reads | Needs |
 |---|---|---|
 | `get_my_account` | The connected person's Hence username | Their Hence account connected, permission `account:read` |
+| `list_my_theses` | Their theses: written, saved, followed, held on paper or archived, private ones included | `theses:read` |
+| `get_my_thesis` | One of them in full, with versions and a price history | `theses:read` |
+| `get_my_portfolio` | Open perpetual positions read live, realized trading results, and the last account value Hence recorded. It says what it does not include (cash, spot balances, outcome positions) | `portfolio:read` |
 
 Few tools on purpose. A caller pays for every tool description on every turn; the whole list
 is about a thousand tokens.
+
+## The `hence` command
+
+The same tools from a terminal, for scripts and for coding agents without an MCP client. It is
+a thin client of this server (`hence_cli/`, standard library only), so a tool the server gains
+is available at once through `hence tools` and `hence call`.
+
+```bash
+pipx install git+https://github.com/Hence-Markets/hence-mcp-server
+
+hence theses search AI capex        # public theses about something
+hence theses featured               # today's featured theses
+hence thesis <id or link>           # one thesis in full
+hence markets nvda                  # what can be traded on Hence, and where
+hence login                         # connect this terminal to your Hence account
+hence whoami
+hence my theses                     # your own theses, private ones included
+hence my thesis <id or link>        # one of them in full
+hence portfolio                     # your open positions and trading results
+hence tools                         # everything the server offers right now
+hence call <tool> --arg key=value   # any tool by name
+```
+
+`--json` on any of them prints the exact structured answer. `--server` or `HENCE_MCP_URL`
+points it at another server (https only, or this machine).
+
+What it promises:
+
+- **A failure is never data.** The reason goes to stderr, the exit code is non-zero and stdout
+  is empty. Exit `1`: Hence could not do it. Exit `3`: run `hence login`.
+- **A figure that was not read prints as `n/a`**, never as zero, and every note the server
+  sent (a source that could not be read, "results are hypothetical") is printed under the result.
+- **The sign-in stays put.** `hence login` opens Hence in the browser; you press Allow there.
+  The credential is kept in `~/.config/hence/credentials.json`, readable only by you, and is
+  sent only to the server it was issued for, only when that server asks for it. It is never
+  printed. `hence logout` tells Hence to close the connection.
+
+## For coding agents: the skill
+
+`skills/hence/SKILL.md` teaches an agent when to use which tool and how to report what it
+reads (unread figures are unavailable, returns are hypothetical, give the link, no advice).
+
+In Claude Code this repository is a plugin that brings the MCP server and the skill together:
+
+```
+/plugin marketplace add Hence-Markets/hence-mcp-server
+/plugin install hence@hence-markets
+```
+
+To add only the MCP server:
+
+```bash
+claude mcp add --transport http hence https://mcp.hence.markets/mcp
+```
+
+For any other agent, copy the `skills/hence` folder into its skills directory and add the
+server address above to its MCP settings. Signing in to a Hence account happens in the
+browser the first time a tool needs it (in Claude Code, through `/mcp`).
 
 ## Connecting a Hence account
 
@@ -160,6 +221,10 @@ gateway/protocol.py   MCP, both eras, no sockets
 gateway/limits.py     the flood guard
 gateway/app.py        the HTTP server
 data/                 display names for a few venue contracts
+hence_cli/            the `hence` command: a client of this server (not in the image)
+skills/hence/         the skill for coding agents
+.claude-plugin/       this repository as a Claude Code plugin and its own marketplace
+.mcp.json             the server address, for the plugin
 ```
 
 ## What comes next
