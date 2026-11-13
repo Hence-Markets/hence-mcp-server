@@ -357,13 +357,37 @@ def search_markets(args, up):
     return out
 
 
-def _tool(name, title, description, schema, handler):
+ACCOUNT = {'type': 'object', 'additionalProperties': False, 'properties': {}}
+
+
+def get_my_account(args, up, account):
+    """The connected person's Hence username. `account` reads the app under their connection;
+    its failures (not connected, not allowed, busy, unavailable) are raised and handled by the
+    protocol layer, which knows how to ask the person to sign in."""
+    _unknown_keys(args, ACCOUNT)
+    data = account.get('/api/agents/v1/whoami')
+    handle = shape.text(data.get('handle'))
+    allowed = data.get('scopes')
     return {
+        'username': handle,
+        'profile_url': shape.text(data.get('profile_url')) if handle else None,
+        'connected_agent': shape.text(data.get('agent')),
+        'allowed': [s for s in allowed if isinstance(s, str)] if isinstance(allowed, list) else [],
+        # null here is a fact (the app read the account and it has no username); a failed read never gets this far
+        'note': None if handle else 'This Hence account has not claimed a username yet.',
+    }
+
+
+def _tool(name, title, description, schema, handler, scope=None):
+    tool = {
         'name': name, 'title': title, 'description': description, 'inputSchema': schema,
         'annotations': {'title': title, 'readOnlyHint': True, 'destructiveHint': False,
                         'idempotentHint': True, 'openWorldHint': True},
         'handler': handler,
     }
+    if scope:
+        tool['scope'] = scope       # the permission the person must have given; its handler takes an account
+    return tool
 
 
 # Order is part of the contract: clients cache the list, and a stable order keeps their prompt cache warm.
@@ -391,7 +415,25 @@ TOOLS = [
 
 BY_NAME = {t['name']: t for t in TOOLS}
 
+# Tools that read a connected person's own account. They exist only while sign-in is switched
+# on and configured (config.accounts_active); each names the permission it needs.
+ACCOUNT_TOOLS = [
+    _tool('get_my_account', 'Your Hence account',
+          'The Hence username of the person using this agent. Needs their Hence account to be connected: '
+          'if it is not, the client will ask them to sign in to Hence and allow it.',
+          ACCOUNT, get_my_account, scope='account:read'),
+]
+
+
+def listed():
+    """The tools this server offers right now, in a stable order."""
+    return TOOLS + (ACCOUNT_TOOLS if config.accounts_active() else [])
+
+
+def find(name):
+    return next((t for t in listed() if t['name'] == name), None)
+
 
 def public_definition(tool):
-    """What tools/list sends: everything but the handler."""
-    return {k: v for k, v in tool.items() if k != 'handler'}
+    """What tools/list sends: everything but the handler and the server-side permission."""
+    return {k: v for k, v in tool.items() if k not in ('handler', 'scope')}

@@ -23,8 +23,9 @@ resources, prompts, sampling, subscriptions. A GET or DELETE on the endpoint is 
 import base64
 import json
 import time
+import urllib.parse
 
-from . import config, tools
+from . import appauth, config, tools
 
 MODERN_VERSIONS = ('2026-07-28',)
 LEGACY_VERSIONS = ('2025-11-25', '2025-06-18', '2025-03-26')
@@ -37,6 +38,7 @@ META_SERVER = 'io.modelcontextprotocol/serverInfo'
 PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR = -32700, -32600, -32601, -32602, -32603
 HEADER_MISMATCH, UNSUPPORTED_VERSION = -32020, -32022
 NOT_OPEN = -32000
+SIGN_IN = -32001
 
 INSTRUCTIONS = (
     'Hence turns a belief about the world into a researched basket of holdings across perpetuals, spot tokens '
@@ -74,24 +76,95 @@ def _header_value(v):
     return v
 
 
-def _call_tool(params, upstream, log):
-    """-> (result_dict, None) or (None, (code, message)). A tool's own failure is a RESULT with
-    isError true (the model can read it and recover); only a malformed call is a protocol error."""
+def resource_metadata_url():
+    """Where a client reads how to sign in (RFC 9728): the well-known path, then this server's own path."""
+    p = urllib.parse.urlsplit(config.resource())
+    return '%s://%s/.well-known/oauth-protected-resource%s' % (p.scheme, p.netloc, p.path if p.path not in ('', '/') else '')
+
+
+def resource_metadata():
+    return {'resource': config.resource(), 'authorization_servers': [config.auth_issuer()],
+            'scopes_supported': sorted({t['scope'] for t in tools.ACCOUNT_TOOLS}),
+            'bearer_methods_supported': ['header'], 'resource_name': config.SERVER_TITLE}
+
+
+def _challenge(status, scope, error, description):
+    """-> (http status, sentence, WWW-Authenticate value). 401 = sign in; 403 = allow more."""
+    parts = ['resource_metadata="%s"' % resource_metadata_url(), 'scope="%s"' % scope]
+    if error:
+        parts = ['error="%s"' % error] + parts
+    return status, description, 'Bearer ' + ', '.join(parts)
+
+
+def _bearer(headers):
+    value = headers.get('authorization') or ''
+    return value[7:].strip() if value[:7].lower() == 'bearer ' else ''
+
+
+class _Account:
+    """What a signed-in tool is handed: reads under one person's connection, and nothing else."""
+
+    def __init__(self, auth, grant):
+        self._auth, self._grant = auth, grant
+
+    def get(self, path):
+        return self._auth.get(self._grant, path)
+
+
+def _refusal(sentence):
+    return {'content': [{'type': 'text', 'text': sentence}], 'isError': True}
+
+
+def _call_tool(params, upstream, log, headers=None, auth=None):
+    """-> (result, None, None), (None, (code, message), None) or (None, None, challenge).
+
+    A tool's own failure is a RESULT with isError true (the model can read it and recover); a
+    malformed call is a protocol error; and a signed-in tool called without a usable
+    connection is a CHALLENGE, an HTTP 401/403 that tells the client to send the person to
+    Hence. A public tool never looks at the credential at all."""
     name = params.get('name')
-    tool = tools.BY_NAME.get(name) if isinstance(name, str) else None
+    tool = tools.find(name) if isinstance(name, str) else None
     if not tool:
-        return None, (INVALID_PARAMS, 'Unknown tool: %s' % (name if isinstance(name, str) else '(missing name)'))
+        return None, (INVALID_PARAMS, 'Unknown tool: %s' % (name if isinstance(name, str) else '(missing name)')), None
     args = params.get('arguments')
     if args is None:
         args = {}
     if not isinstance(args, dict):
-        return None, (INVALID_PARAMS, 'Tool arguments must be an object.')
+        return None, (INVALID_PARAMS, 'Tool arguments must be an object.'), None
+    scope, account, bearer = tool.get('scope'), None, ''
+    if scope:
+        bearer = _bearer(headers or {})
+        if not bearer or auth is None:
+            return None, None, _challenge(401, scope, None, 'Connect your Hence account to use this.')
+        try:
+            conn = auth.connection(bearer)
+        except appauth.NotConnected:
+            return None, None, _challenge(401, scope, 'invalid_token', 'This agent is not connected to a Hence account. Connect it again.')
+        except appauth.Unavailable as e:
+            # Hence did not answer: say so. Answering "sign in again" would throw away a good connection.
+            if log:
+                log('tool=%s outcome=auth-unavailable' % name)
+            return _refusal('%s. Your account was not read; try again shortly.' % e), None, None
+        if scope not in conn['scopes']:
+            return None, None, _challenge(403, scope, 'insufficient_scope', 'This needs a permission you have not given this agent.')
+        account = _Account(auth, conn['grant'])
     started = time.monotonic()
     try:
-        value = tool['handler'](args, upstream)
+        value = tool['handler'](args, upstream, account) if scope else tool['handler'](args, upstream)
         outcome = 'ok'
         result = {'content': [{'type': 'text', 'text': json.dumps(value, ensure_ascii=False, separators=(',', ':'))}],
                   'structuredContent': value, 'isError': False}
+    except appauth.NotConnected:
+        auth.forget(bearer)     # the app says the connection is gone: stop remembering the token as good
+        return None, None, _challenge(401, scope, 'invalid_token', 'This agent is no longer connected to a Hence account. Connect it again.')
+    except appauth.MissingScope as e:
+        return None, None, _challenge(403, e.scope or scope, 'insufficient_scope', 'This needs a permission you have not given this agent.')
+    except appauth.Busy as e:
+        outcome = 'busy'
+        result = _refusal('Too many requests for this account. Try again in %s seconds.' % e.retry_after)
+    except appauth.Unavailable as e:
+        outcome = 'unavailable'
+        result = _refusal('%s. Your account was not read; try again shortly.' % e)
     except tools.ToolError as e:
         outcome = 'refused'
         result = {'content': [{'type': 'text', 'text': str(e)}], 'isError': True}
@@ -100,16 +173,27 @@ def _call_tool(params, upstream, log):
         result = {'content': [{'type': 'text', 'text': 'Hence hit an internal error. Nothing was read; try again shortly.'}],
                   'isError': True}
     if log:
-        # the tool and how it went; never the arguments (a person's question is theirs)
+        # the tool and how it went; never the arguments or the credential (they are the person's)
         log('tool=%s outcome=%s ms=%d' % (name, outcome, (time.monotonic() - started) * 1000))
-    return result, None
+    return result, None, None
 
 
 def _tools_list():
-    return [tools.public_definition(t) for t in tools.TOOLS]
+    return [tools.public_definition(t) for t in tools.listed()]
 
 
-def handle(headers, raw, upstream, log=None):
+def handle(headers, raw, upstream, log=None, auth=None):
+    """-> (http status, json payload or None). See handle_full for the response headers."""
+    return handle_full(headers, raw, upstream, log, auth)[:2]
+
+
+def handle_full(headers, raw, upstream, log=None, auth=None):
+    """-> (http status, json payload or None, extra response headers)."""
+    out = _handle(headers, raw, upstream, log, auth)
+    return out if len(out) == 3 else (out[0], out[1], {})
+
+
+def _handle(headers, raw, upstream, log, auth):
     """headers: a mapping with LOWER-CASE names. raw: the POST body bytes."""
     try:
         msg = json.loads(raw.decode('utf-8'))
@@ -166,7 +250,9 @@ def handle(headers, raw, upstream, log=None):
             if _header_value(headers.get('mcp-name')) != params.get('name'):
                 return 400, _error(msg_id, HEADER_MISMATCH,
                                    'Header mismatch: Mcp-Name header does not match the tool name in the body')
-            result, err = _call_tool(params, upstream, log)
+            result, err, challenge = _call_tool(params, upstream, log, headers, auth)
+            if challenge:
+                return challenge[0], _error(msg_id, SIGN_IN, challenge[1]), {'WWW-Authenticate': challenge[2]}
             if err:
                 return 200, _error(msg_id, err[0], err[1])
             return 200, _result(msg_id, dict(result, resultType='complete', _meta=stamp))
@@ -195,7 +281,9 @@ def handle(headers, raw, upstream, log=None):
     if method == 'tools/list':
         return 200, _result(msg_id, {'tools': _tools_list()})
     if method == 'tools/call':
-        result, err = _call_tool(params, upstream, log)
+        result, err, challenge = _call_tool(params, upstream, log, headers, auth)
+        if challenge:
+            return challenge[0], _error(msg_id, SIGN_IN, challenge[1]), {'WWW-Authenticate': challenge[2]}
         if err:
             return 200, _error(msg_id, err[0], err[1])
         return 200, _result(msg_id, result)

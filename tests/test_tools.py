@@ -29,10 +29,13 @@ class ReadOnlyByConstruction(unittest.TestCase):
             self.assertNotRegex(t['name'], r'(trade|order|buy|sell|withdraw|transfer|send|deposit|fund|create|approve|sign)')
 
     def test_the_gateway_only_ever_reads_the_app(self):
-        # One module talks to the network (upstream.py), and all it can send is a GET with no
-        # body. No module holds a key or reaches a signing library. When a later slice adds
-        # writes they belong behind the app's own checks; this test is the tripwire that makes
-        # that a decision instead of a drift.
+        # Two modules talk to the network, and each is boxed in:
+        #   upstream.py  public reads: a GET with no body, nothing else;
+        #   appauth.py   the signed-in half: it may ask the app who a token speaks for (one POST
+        #                path) and read the account paths listed in ACCOUNT_PATHS, nothing else.
+        # No module holds a user's key or reaches a signing library for money. When a later slice
+        # adds a path it adds it to ACCOUNT_PATHS and to this test, on purpose.
+        from gateway import appauth
         seen_network = []
         for name in sorted(os.listdir(SRC)):
             if not name.endswith('.py'):
@@ -43,13 +46,29 @@ class ReadOnlyByConstruction(unittest.TestCase):
             self.assertIsNone(re.search(r"^\s*(?:import|from)\s+(?:subprocess|socket|http\.client|requests|httpx|aiohttp)\b", code, re.M), name)
             if 'urllib.request' in code:
                 seen_network.append(name)
-        self.assertEqual(seen_network, ['upstream.py'])
+        self.assertEqual(seen_network, ['appauth.py', 'upstream.py'])
         with open(os.path.join(SRC, 'upstream.py'), encoding='utf-8') as f:
             code = f.read()
         requests_made = re.findall(r"urllib\.request\.Request\((.*?)\)\n", code, re.S)
         self.assertEqual(len(requests_made), 1)
         self.assertNotRegex(requests_made[0], r"\bdata\s*=")       # urllib POSTs only when given data=
         self.assertNotRegex(requests_made[0], r"\bmethod\s*=")
+        # the signed-in half reaches exactly these, and every one of them is a read of the person's own account
+        self.assertEqual(appauth.INTROSPECT, '/api/agents/v1/introspect')
+        self.assertEqual(appauth.ACCOUNT_PATHS, ('/api/agents/v1/whoami',))
+        with open(os.path.join(SRC, 'appauth.py'), encoding='utf-8') as f:
+            code = f.read()
+        calls = re.findall(r"self\._call\(([^)]*)\)", code)
+        self.assertEqual(calls, ["'POST', INTROSPECT, '', body", "'GET', path, grant, None"])
+        self.assertIn("if path not in ACCOUNT_PATHS:\n            raise ValueError", code)
+
+    def test_signed_in_tools_are_reads_too_and_name_their_permission(self):
+        for t in tools.ACCOUNT_TOOLS:
+            self.assertIs(t['annotations']['readOnlyHint'], True, t['name'])
+            self.assertIs(t['annotations']['destructiveHint'], False, t['name'])
+            self.assertNotRegex(t['name'], r'(trade|order|buy|sell|withdraw|transfer|send|deposit|fund|create|approve|sign)')
+            self.assertEqual(t['scope'], 'account:read')
+            self.assertNotIn('scope', tools.public_definition(t))
 
     def test_the_public_definition_hides_the_handler(self):
         d = tools.public_definition(tools.TOOLS[0])

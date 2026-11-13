@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 from . import config, protocol
+from .appauth import AppAuth
 from .limits import RateLimiter
 from .upstream import Upstream
 
@@ -34,7 +35,7 @@ def _origin_allowed(origin):
     return host in ('localhost', '127.0.0.1', '::1')
 
 
-def make_handler(upstream, limiter):
+def make_handler(upstream, limiter, auth=None):
     class Handler(BaseHTTPRequestHandler):
         server_version = 'HenceMCP/' + config.VERSION
         protocol_version = 'HTTP/1.1'
@@ -48,9 +49,10 @@ def make_handler(upstream, limiter):
             if body:
                 self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Content-Length', str(len(body)))
-            self.send_header('Cache-Control', 'no-store')
+            extra = dict(extra or {})
+            self.send_header('Cache-Control', extra.pop('Cache-Control', 'no-store'))
             self.send_header('X-Content-Type-Options', 'nosniff')
-            for k, v in (extra or {}).items():
+            for k, v in extra.items():
                 self.send_header(k, v)
             self.end_headers()
             if body:
@@ -71,6 +73,13 @@ def make_handler(upstream, limiter):
                 return self._send(200, {'ok': True, 'version': config.VERSION, 'open': config.active()})
             if path == '/mcp':
                 return self._send(405, protocol._error(None, protocol.INVALID_REQUEST, 'This endpoint accepts POST only.'), {'Allow': 'POST'})
+            if path.startswith('/.well-known/oauth-protected-resource'):
+                # how a client learns where to sign people in (RFC 9728). Absent while sign-in is
+                # off, so a client sees a server that needs no credentials at all.
+                known = {'/.well-known/oauth-protected-resource', urlparse(protocol.resource_metadata_url()).path}
+                if config.accounts_active() and path in known:
+                    return self._send(200, protocol.resource_metadata(), {'Cache-Control': 'public, max-age=300'})
+                return self._send(404, {'error': 'not found'})
             if path == '/':
                 return self._send(200, {
                     'name': 'Hence MCP server', 'version': config.VERSION,
@@ -102,8 +111,8 @@ def make_handler(upstream, limiter):
                 return self._send(429, protocol._error(None, protocol.NOT_OPEN, 'Too many requests. Slow down and retry.'),
                                   {'Retry-After': '10'})
             headers = {k.lower(): v for k, v in self.headers.items()}
-            status, payload = protocol.handle(headers, raw, upstream, log=_log)
-            self._send(status, payload)
+            status, payload, extra = protocol.handle_full(headers, raw, upstream, log=_log, auth=auth)
+            self._send(status, payload, extra)
 
     return Handler
 
@@ -113,14 +122,14 @@ class Server(ThreadingHTTPServer):
     request_queue_size = 128  # a hosted assistant opens many connections at once
 
 
-def make_server(host=None, port=None, upstream=None, limiter=None):
+def make_server(host=None, port=None, upstream=None, limiter=None, auth=None):
     return Server((host if host is not None else config.host(), port if port is not None else config.port()),
-                  make_handler(upstream or Upstream(), limiter or RateLimiter()))
+                  make_handler(upstream or Upstream(), limiter or RateLimiter(), auth or AppAuth()))
 
 
 def main():
     server = make_server()
-    _log('listening on %s:%d, reading %s, open=%s' % (config.host(), config.port(), config.app_base(), config.active()))
+    _log('listening on %s:%d, reading %s, open=%s, sign-in=%s' % (config.host(), config.port(), config.app_base(), config.active(), config.accounts_active()))
     try:
         server.serve_forever()
     except KeyboardInterrupt:
