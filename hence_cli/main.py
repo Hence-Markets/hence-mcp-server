@@ -5,6 +5,9 @@
     hence thesis <id or link>        one thesis in full
     hence markets <words>            what can be traded on Hence, and where
     hence login | logout | whoami    connect this terminal to your Hence account
+    hence my theses                  your own theses, private ones included
+    hence my thesis <id or link>     one of them in full
+    hence portfolio                  your open positions and trading results
     hence tools                      everything the server offers right now
     hence call <tool> --arg k=v      any tool, including ones newer than this release
 
@@ -58,6 +61,19 @@ def _parser():
     markets.add_argument('--kind', choices=['all', 'perp', 'spot'])
     markets.add_argument('--limit', type=int)
 
+    my = sub.add_parser('my', help='your own theses (needs hence login)', parents=[common])
+    msub = my.add_subparsers(dest='what', metavar='theses|thesis')
+    mine = msub.add_parser('theses', help='your theses, private ones included', parents=[common])
+    mine.add_argument('--which', choices=['created', 'saved', 'following', 'paper', 'archived', 'all'])
+    mine.add_argument('--limit', type=int)
+    mine.add_argument('--cursor')
+    one = msub.add_parser('thesis', help='one of your theses in full', parents=[common])
+    one.add_argument('id', help='a thesis id, or its Hence link')
+    one.add_argument('--days', type=int, choices=[30, 90, 180, 365], help='price-history period')
+
+    portfolio = sub.add_parser('portfolio', help='your open positions and trading results (needs hence login)', parents=[common])
+    portfolio.add_argument('--days', type=int, help='window for the per-market results (1 to 365)')
+
     sub.add_parser('login', help='connect this terminal to your Hence account', parents=[common])
     sub.add_parser('logout', help='disconnect this terminal', parents=[common])
     sub.add_parser('whoami', help='the Hence account this terminal is connected to', parents=[common])
@@ -90,6 +106,17 @@ def _arguments(ns):
         return 'search_markets', some(query=' '.join(ns.query), kind=ns.kind, limit=ns.limit)
     if ns.command == 'whoami':
         return 'get_my_account', {}
+    if ns.command == 'my':
+        if ns.what == 'theses':
+            return 'list_my_theses', some(which=ns.which, limit=ns.limit, cursor=ns.cursor)
+        if ns.what == 'thesis':
+            found = UUID.search(ns.id)
+            if not found:
+                raise CliError('"%s" is not a thesis id or a Hence thesis link.' % ns.id)
+            return 'get_my_thesis', some(thesis_id=found.group(0).lower(), period_days=ns.days)
+        raise CliError('Say `hence my theses` or `hence my thesis <id>`.')
+    if ns.command == 'portfolio':
+        return 'get_my_portfolio', some(history_days=ns.days)
     if ns.command == 'call':
         args = {}
         if ns.json_args:

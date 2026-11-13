@@ -31,6 +31,13 @@ def price(v):
     return ('%.2f' % v) if abs(v) >= 1 else ('%.6g' % v)
 
 
+def count(v):
+    """A whole number of things (trades, wins). The app stores some of them as floats."""
+    if not isinstance(v, (int, float)) or isinstance(v, bool):
+        return NA
+    return '%d' % v if float(v).is_integer() else '%g' % v
+
+
 def text(v):
     return v if isinstance(v, str) and v else NA
 
@@ -85,7 +92,7 @@ def theses(value, with_return=False):
     return body + ('\n\n' + extra if extra else '')
 
 
-def thesis(value):
+def thesis(value, also_shown=()):
     out = ['%s  (%s, %s)' % (text(value.get('title')), text(value.get('author')), text(value.get('topic')))]
     for label, key in (('Summary', 'summary'), ('Why now', 'why_now'), ('Counter-case', 'counter_case'), ('Wrong if', 'invalidation')):
         if isinstance(value.get(key), str) and value[key]:
@@ -115,7 +122,7 @@ def thesis(value):
     out.append('\n' + text(value.get('url')))
     shown = {'title', 'author', 'topic', 'summary', 'why_now', 'counter_case', 'invalidation', 'holdings', 'performance', 'checkpoints', 'url',
              'thesis_id', 'mechanism', 'sources', 'upkeep', 'other_baskets', 'paper_holdings', 'version_recorded_at', 'created_at', 'related'}
-    extra = footer(value, shown)
+    extra = footer(value, shown | set(also_shown))
     return '\n'.join(out) + ('\n' + extra if extra else '')
 
 
@@ -147,13 +154,75 @@ def account(value):
     return '\n'.join(out) + ('\n' + extra if extra else '')
 
 
+def my_theses(value):
+    rows = value.get('theses')
+    if not isinstance(rows, list):
+        return json.dumps(value, indent=2, ensure_ascii=False)
+    lines = []
+    for t in rows:
+        if not isinstance(t, dict):
+            continue
+        marks = [text(t.get('visibility')), text(t.get('status'))] + (['research in progress'] if t.get('research_in_progress') else []) \
+            + ([] if t.get('yours') else ['not yours'])
+        lines.append('%s  [%s]\n  %s' % (text(t.get('title')), ', '.join(marks), text(t.get('url'))))
+    body = '\n\n'.join(lines) or 'No theses in this list.'
+    if value.get('next_cursor'):
+        body += '\n\nMore: add --cursor %s' % value['next_cursor']
+    extra = footer(value, {'theses', 'next_cursor'})
+    return body + ('\n\n' + extra if extra else '')
+
+
+def my_thesis(value):
+    head = '[%s, %s%s]' % (text(value.get('visibility')), text(value.get('status')), '' if value.get('yours') else ', not yours')
+    return head + '\n' + thesis(value, also_shown=('yours', 'visibility', 'status', 'saved', 'archived', 'research_in_progress', 'versions'))
+
+
+def portfolio(value):
+    out = []
+    held = value.get('open_positions')
+    state = value.get('positions') if isinstance(value.get('positions'), dict) else {}
+    if held is None:
+        out.append('Open perpetual positions: %s (they could not be read)' % NA)
+    elif not held:
+        out.append('Open perpetual positions: none')
+    else:
+        rows = [[text(p.get('coin')), text(p.get('side')), ('%g' % p['size']) if isinstance(p.get('size'), (int, float)) else NA,
+                 price(p.get('entry_price')), money(p.get('value_usd')), money(p.get('unrealized_pnl_usd')),
+                 ('%gx' % p['leverage']) if isinstance(p.get('leverage'), (int, float)) else NA, text(p.get('venue')), text(p.get('wallet'))]
+                for p in held if isinstance(p, dict)]
+        out.append('Open perpetual positions\n' + table(rows, ['market', 'side', 'size', 'entry', 'value', 'unrealized', 'leverage', 'venue', 'wallet']))
+    if held is not None and state.get('complete') is not True:
+        missing = ['%s on %s' % (text(u.get('wallet')), text(u.get('venue'))) for u in state.get('could_not_read') or [] if isinstance(u, dict)]
+        out.append('  not complete: ' + ('could not read ' + ', '.join(missing) if missing else 'some wallets were not read'))
+    results = value.get('trading_results')
+    if not isinstance(results, dict):
+        out.append('\nTrading results: %s (they could not be read)' % NA)
+    elif results.get('has_history') is not True:
+        out.append('\nTrading results: nothing recorded yet')
+    else:
+        windows = results.get('windows') if isinstance(results.get('windows'), dict) else {}
+        rows = [[('%s days' % w) if w != 'all' else 'all time', money(v.get('realized')), money(v.get('fees')), money(v.get('volume')),
+                 count(v.get('trades')), count(v.get('wins')), count(v.get('losses'))]
+                for w, v in windows.items() if isinstance(v, dict)]
+        out.append('\nRealized trading results (recorded fills)\n' + table(rows, ['window', 'realized', 'fees', 'volume', 'trades', 'wins', 'losses']))
+    recorded = value.get('last_recorded_value')
+    if isinstance(recorded, dict):
+        out.append('\nLast account value Hence recorded: %s (recorded at %s, not the value now)' % (money(recorded.get('usd')), recorded.get('recorded_at_ms', NA)))
+    missing = [n for n in value.get('not_included') or [] if isinstance(n, str)]
+    if missing:
+        out.append('\nNot included (this is not the whole portfolio):\n' + '\n'.join('  - ' + n for n in missing))
+    extra = footer(value, {'open_positions', 'positions', 'trading_results', 'last_recorded_value', 'not_included', 'trading_results_days', 'as_of_ms'})
+    return '\n'.join(out) + ('\n\n' + extra if extra else '')
+
+
 def tools(found):
     rows = [[t.get('name', ''), (t.get('title') or '')] for t in found if isinstance(t, dict)]
     return table(rows, ['tool', 'what it does'])
 
 
 VIEWS = {'search_theses': theses, 'get_featured_theses': lambda v: theses(v, with_return=True), 'get_thesis': thesis,
-         'search_markets': markets, 'get_my_account': account}
+         'search_markets': markets, 'get_my_account': account, 'list_my_theses': my_theses, 'get_my_thesis': my_thesis,
+         'get_my_portfolio': portfolio}
 
 
 def show(tool, value, as_json=False):

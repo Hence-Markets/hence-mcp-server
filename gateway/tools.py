@@ -14,6 +14,7 @@ import json
 import os
 
 from . import config, shape
+from . import appauth
 from .upstream import Expired, NotFound, Unavailable
 
 WORKSPACE = '/api/thesis-workspace'
@@ -82,7 +83,7 @@ def _cursor_pack(snapshot, offset, filters):
     return base64.urlsafe_b64encode(raw).decode().rstrip('=')
 
 
-def _cursor_unpack(cursor):
+def _cursor_unpack(cursor, keys=('q', 'sort', 'venue')):
     try:
         raw = base64.urlsafe_b64decode(cursor + '=' * (-len(cursor) % 4))
         c = json.loads(raw.decode())
@@ -90,7 +91,7 @@ def _cursor_unpack(cursor):
         if not (isinstance(s, str) and 0 < len(s) <= 64 and isinstance(o, int) and not isinstance(o, bool)
                 and 0 <= o <= 100000 and isinstance(f, dict)
                 and all(isinstance(k, str) and isinstance(v, str) and len(v) <= 200 for k, v in f.items())
-                and set(f) <= {'q', 'sort', 'venue'}):
+                and set(f) <= set(keys)):
             raise ValueError
         return s, o, f
     except Exception:
@@ -378,6 +379,130 @@ def get_my_account(args, up, account):
     }
 
 
+# ── the person's own theses and portfolio ─────────────────────────────────────────────────────
+# These read the connected person's account through the app's signed surface (appauth). The app
+# decides whose data it is from the connection; nothing here names an account or a wallet.
+
+WHICH = ('created', 'saved', 'following', 'paper', 'archived', 'all')
+
+LIST_MY_THESES = {
+    'type': 'object',
+    'additionalProperties': False,
+    'properties': {
+        'which': {'type': 'string', 'enum': list(WHICH), 'default': 'created',
+                  'description': 'created: theses the person wrote (default). saved, following, paper (held on paper), archived, '
+                                 'or all of the non-archived ones together.'},
+        'limit': {'type': 'integer', 'minimum': 1, 'maximum': 12, 'default': 10},
+        'cursor': {'type': 'string', 'maxLength': 600, 'description': 'next_cursor from the previous page of the same list.'},
+    },
+}
+
+
+def _account_dict(data, what):
+    if not isinstance(data, dict):
+        raise appauth.Unavailable('Hence gave an answer that could not be read (%s)' % what)
+    return data
+
+
+def list_my_theses(args, up, account):
+    _unknown_keys(args, LIST_MY_THESES)
+    which = _choice(args, 'which', WHICH, 'created')
+    limit = _integer(args, 'limit', 1, 12, 10)
+    cursor = _string(args, 'cursor', 600)
+    query = {'filter': which, 'limit': limit}
+    if cursor:
+        snapshot, offset, made_with = _cursor_unpack(cursor, keys=('which',))
+        if made_with.get('which') != which:
+            raise ToolError('That `cursor` belongs to a different list. Ask again without it.')
+        query.update(snapshot=snapshot, offset=offset)
+    data = _account_dict(account.get('/api/agents/v1/theses', query), 'theses')
+    rows = data.get('theses')
+    if not isinstance(rows, list):
+        raise appauth.Unavailable('Hence gave an answer that could not be read (theses)')
+    base = config.public_base()
+    out = {'theses': [shape.my_thesis_card(r, base) for r in rows if isinstance(r, dict)], 'which': which,
+           'total': shape.num(data.get('total')), 'next_cursor': None, 'note': shape.DISCLAIMER}
+    snapshot, nxt = data.get('snapshot'), data.get('next_offset')
+    if isinstance(snapshot, str) and snapshot and isinstance(nxt, int) and not isinstance(nxt, bool):
+        out['next_cursor'] = _cursor_pack(snapshot, nxt, {'which': which})
+    unread = shape.num(data.get('unread'))
+    if unread:
+        # the page is short because rows could not be read, not because the list ended
+        out['unread_count'] = unread
+        out['unread_note'] = '%d theses on this page could not be read and are missing from it. The list is not complete.' % unread
+    return out
+
+
+GET_MY_THESIS = {
+    'type': 'object',
+    'additionalProperties': False,
+    'required': ['thesis_id'],
+    'properties': {
+        'thesis_id': {'type': 'string', 'description': 'The thesis id, from list_my_theses.'},
+        'period_days': {'type': 'integer', 'enum': [30, 90, 180, 365], 'default': 90},
+        'include_performance': {'type': 'boolean', 'default': True},
+        'include_paper': {'type': 'boolean', 'default': False},
+    },
+}
+
+
+def get_my_thesis(args, up, account):
+    _unknown_keys(args, GET_MY_THESIS)
+    thesis_id = _string(args, 'thesis_id', 64).lower()
+    if not shape.UUID_RE.match(thesis_id):
+        raise ToolError('`thesis_id` is not a thesis id. Use one from list_my_theses.')
+    days = _choice(args, 'period_days', (30, 90, 180, 365), 90)
+    want_perf = _boolean(args, 'include_performance', True)
+    path = '/api/agents/v1/theses/' + thesis_id
+    detail = _account_dict(account.get(path), 'thesis')
+    if not isinstance(detail.get('body'), dict):
+        raise appauth.Unavailable('Hence gave an answer that could not be read (thesis)')
+    base = config.public_base()
+    out = shape.thesis_detail(detail, base, with_paper=_boolean(args, 'include_paper', False))
+    out.update(shape.ownership(detail))
+    out['versions'] = [{'version': shape.num(v.get('version')), 'recorded_at': shape.text(v.get('created_at')),
+                        'change': shape.text(v.get('change_reason'), 300)}
+                       for v in (detail.get('versions') if isinstance(detail.get('versions'), list) else [])[:20] if isinstance(v, dict)]
+    out['note'] = shape.DISCLAIMER
+    out['how_to_trade'] = 'Open the url in Hence to review and buy this basket. This server cannot place trades.'
+    if want_perf:
+        # A second read. If it fails, or Hence says there is no history yet, the thesis is still
+        # worth returning; the result says the figures are missing rather than leaving them out.
+        try:
+            perf = shape.performance(_account_dict(account.get(path + '/performance', {'days': days}), 'price history'), days)
+            if perf is None:
+                raise appauth.Unavailable('Hence gave an answer that could not be read')
+            out['performance'] = perf
+        except (appauth.Unavailable, appauth.Refused, appauth.Busy) as e:
+            out['performance'] = None
+            out['performance_unavailable'] = 'The price history could not be read (%s). Do not state a return for this thesis.' % (
+                e if isinstance(e, appauth.Refused) else 'try again shortly')
+    return out
+
+
+GET_MY_PORTFOLIO = {
+    'type': 'object',
+    'additionalProperties': False,
+    'properties': {
+        'history_days': {'type': 'integer', 'minimum': 1, 'maximum': 365, 'default': 30,
+                         'description': 'The window for the per-market trading results.'},
+    },
+}
+
+
+def get_my_portfolio(args, up, account):
+    """The person's open perpetual positions, recorded trading results and last recorded account
+    value, as the Hence app answers them. Nothing is recomputed here: an unread section stays
+    null and named, and `not_included` travels with every answer."""
+    _unknown_keys(args, GET_MY_PORTFOLIO)
+    days = _integer(args, 'history_days', 1, 365, 30)
+    data = _account_dict(account.get('/api/agents/v1/portfolio', {'days': days}), 'portfolio')
+    out = shape.portfolio(data)
+    if out is None:
+        raise appauth.Unavailable('Hence gave an answer that could not be read (portfolio)')
+    return out
+
+
 def _tool(name, title, description, schema, handler, scope=None):
     tool = {
         'name': name, 'title': title, 'description': description, 'inputSchema': schema,
@@ -422,6 +547,23 @@ ACCOUNT_TOOLS = [
           'The Hence username of the person using this agent. Needs their Hence account to be connected: '
           'if it is not, the client will ask them to sign in to Hence and allow it.',
           ACCOUNT, get_my_account, scope='account:read'),
+    _tool('list_my_theses', 'Your theses',
+          'The theses of the person using this agent: the ones they wrote (private ones included), saved, follow, hold '
+          'on paper, or archived. Returns cards with a link; call get_my_thesis for one in full. If `unread_count` is '
+          'present the list is not complete: say so. Needs their Hence account connected.',
+          LIST_MY_THESES, list_my_theses, scope='theses:read'),
+    _tool('get_my_thesis', 'Read one of your theses',
+          'One thesis of the person using this agent in full, including a private one: the claim, every holding with '
+          'its weight and reason, sources, checkpoints, versions, and a hypothetical price history. If `performance` '
+          'is null, do not state a return. Needs their Hence account connected.',
+          GET_MY_THESIS, get_my_thesis, scope='theses:read'),
+    _tool('get_my_portfolio', 'Your positions and results',
+          'What the person using this agent holds and has done on Hence: open perpetual positions read live from the '
+          'venue, realized trading results from recorded fills, and the last account value Hence recorded (with its '
+          'date). It is NOT the whole portfolio: `not_included` lists what is missing (cash, spot balances, outcome '
+          'positions). Never present it as a total. If `positions.complete` is false or a section is in `unavailable`, '
+          'say what could not be read; a null is unknown, never zero. Needs their Hence account connected.',
+          GET_MY_PORTFOLIO, get_my_portfolio, scope='portfolio:read'),
 ]
 
 

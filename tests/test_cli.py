@@ -366,6 +366,7 @@ class Rendering(unittest.TestCase):
         self.assertEqual((render.pct(0), render.pct(-1.234), render.money(1850000000.0), render.price(0.00001234)),
                          ('+0.00%', '-1.23%', '$1.85B', '1.234e-05'))
         self.assertEqual(render.pct(True), 'n/a')               # a boolean is not a figure
+        self.assertEqual((render.count(4.0), render.count(3), render.count(None), render.count(True)), ('4', '3', 'n/a', 'n/a'))
 
     def test_an_incomplete_price_history_says_so(self):
         text = render.thesis({'title': 'T', 'author': '@a', 'topic': 'x', 'url': 'u', 'performance': {
@@ -400,6 +401,36 @@ class ViewsMatchTheServer(unittest.TestCase):
         self.assertIn('Signed in to a Hence account', none)
         self.assertIn('has not claimed a username yet', none)       # the server's own note, printed as it came
         self.assertNotIn('@', none)
+
+    def test_my_theses_thesis_and_portfolio(self):
+        from .test_my_account import BASE, DETAIL, PERF, PORTFOLIO, ROW, App
+        class Account:
+            def __init__(self, app):
+                self.app = app
+            def get(self, path, query=None):
+                return self.app.get('grant', path, query)
+        app = App({BASE + '/theses': {'theses': [ROW], 'total': 5, 'snapshot': 's', 'next_offset': 1, 'unread': 2},
+                   BASE + '/theses/' + T1: DETAIL, BASE + '/theses/%s/performance' % T1: PERF, BASE + '/portfolio': PORTFOLIO})
+        listed = render.show('list_my_theses', tools.list_my_theses({}, None, Account(app)))
+        for said in ('Overbuilt', '[private, active]', 'https://app.hence.markets/t/' + T1, '--cursor', 'not complete'):
+            self.assertIn(said, listed)
+        one = render.show('get_my_thesis', tools.get_my_thesis({'thesis_id': T1}, None, Account(app)))
+        for said in ('[private, active]', 'Overbuilt', 'xyz:NVDA', '-6.86%'):
+            self.assertIn(said, one)
+        held = render.show('get_my_portfolio', tools.get_my_portfolio({}, None, Account(app)))
+        for said in ('xyz:NVDA', 'short', 'not complete: could not read 0x2222…2222 on Entropy', '$12.50', '$4.20K', 'not the value now',
+                     'Not included (this is not the whole portfolio):', '  - spot token balances'):
+            self.assertIn(said, held)
+        dark = dict(PORTFOLIO, positions=dict(PORTFOLIO['positions'], positions=None), history=None, last_recorded_value=None, unavailable=['positions', 'history'])
+        unknown = render.show('get_my_portfolio', tools.get_my_portfolio({}, None, Account(App({BASE + '/portfolio': dark}))))
+        self.assertIn('Open perpetual positions: n/a (they could not be read)', unknown)
+        self.assertIn('Trading results: n/a (they could not be read)', unknown)
+        self.assertNotIn('none', unknown.split('unavailable')[0])          # unknown is never printed as "none"
+        empty = dict(PORTFOLIO, positions=dict(PORTFOLIO['positions'], positions=[], complete=True, unread=[]),
+                     history=dict(PORTFOLIO['history'], has_history=False))
+        nothing = render.show('get_my_portfolio', tools.get_my_portfolio({}, None, Account(App({BASE + '/portfolio': empty}))))
+        self.assertIn('Open perpetual positions: none', nothing)
+        self.assertIn('Trading results: nothing recorded yet', nothing)
 
     def test_search_and_featured(self):
         found = tools.search_theses({'query': ''}, self.up)

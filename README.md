@@ -26,11 +26,14 @@ a thesis or a trade; to act on anything, a person opens the returned link in Hen
 | `get_featured_theses` | Today's featured selection |
 | `search_markets` | What trades on Hence and where: perpetuals with live price, funding and open interest, and Robinhood Chain spot tokens |
 
-With sign-in switched on there is a fifth:
+With sign-in switched on there are four more, each reading only the connected person's own account:
 
 | Tool | What it reads | Needs |
 |---|---|---|
 | `get_my_account` | The connected person's Hence username | Their Hence account connected, permission `account:read` |
+| `list_my_theses` | Their theses: written, saved, followed, held on paper or archived, private ones included | `theses:read` |
+| `get_my_thesis` | One of them in full, with versions and a price history | `theses:read` |
+| `get_my_portfolio` | Open perpetual positions read live, realized trading results, and the last account value Hence recorded. It says what it does not include (cash, spot balances, outcome positions) | `portfolio:read` |
 
 Few tools on purpose. A caller pays for every tool description on every turn; the whole list
 is about a thousand tokens.
@@ -50,6 +53,9 @@ hence thesis <id or link>           # one thesis in full
 hence markets nvda                  # what can be traded on Hence, and where
 hence login                         # connect this terminal to your Hence account
 hence whoami
+hence my theses                     # your own theses, private ones included
+hence my thesis <id or link>        # one of them in full
+hence portfolio                     # your open positions and trading results
 hence tools                         # everything the server offers right now
 hence call <tool> --arg key=value   # any tool by name
 ```
