@@ -39,13 +39,14 @@ from . import config
 INTROSPECT = '/api/agents/v1/introspect'
 # Every path this module may read under a connection. A new signed-in tool adds its path here,
 # and tests/test_tools.py pins the list: this server can reach nothing it was not given.
-ACCOUNT_PATHS = ('/api/agents/v1/whoami', '/api/agents/v1/theses', '/api/agents/v1/portfolio')
+ACCOUNT_PATHS = ('/api/agents/v1/whoami', '/api/agents/v1/theses', '/api/agents/v1/portfolio', '/api/agents/v1/research')
 _ID = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
-ACCOUNT_PATTERNS = (re.compile(r'^/api/agents/v1/theses/%s(/performance)?$' % _ID),)
-# The only two things this server may SEND under a connection: a thesis the agent wrote, to be
-# checked, and the same thesis to be put in the person's library as a private draft. Neither
-# creates a thesis, publishes one or touches money; the person saves the draft themselves.
-WRITE_PATHS = ('/api/agents/v1/theses/check', '/api/agents/v1/theses/drafts')
+ACCOUNT_PATTERNS = (re.compile(r'^/api/agents/v1/theses/%s(/performance)?$' % _ID), re.compile(r'^/api/agents/v1/research/%s$' % _ID))
+# The only things this server may SEND under a connection: a thesis the agent wrote, to be
+# checked, or put in the person's library as a private draft (the person saves it themselves);
+# and a request for Hence to research an idea, which is the person's own research run under
+# their own daily limit. None of them publishes on the agent's say-so or touches money.
+WRITE_PATHS = ('/api/agents/v1/theses/check', '/api/agents/v1/theses/drafts', '/api/agents/v1/research')
 # what Hence may answer "no" with, in words meant for the person's agent
 REFUSALS = (400, 403, 404, 409, 413, 422)
 

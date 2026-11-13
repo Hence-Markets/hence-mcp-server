@@ -192,7 +192,7 @@ class Saving(Case):
         self.assertEqual(headers['X-Hence-Agent-Signature'], expected['X-Hence-Agent-Signature'])          # the body is signed
         self.assertNotIn('Authorization', headers)
         for path in ('/api/agents/v1/theses', BASE + '/x/version', '/api/thesis-workspace/theses', '/api/exchange', '/api/me/theses/executions',
-                     BASE + '/drafts?publish=1', '/api/agents/v1/portfolio'):
+                     BASE + '/drafts?publish=1', '/api/agents/v1/portfolio', '/api/agents/v1/research/x', '/api/thesis-workspace/lab/create'):
             with self.assertRaises(ValueError):
                 auth.post(GRANT, path, THESIS)
         self.assertEqual(len(sent), 1)

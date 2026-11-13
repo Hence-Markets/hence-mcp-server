@@ -12,6 +12,9 @@
     hence draft new > thesis.json    a blank thesis to fill in
     hence draft check thesis.json    what is wrong with it (nothing is saved)
     hence draft save thesis.json     save it to your Hence library as a private draft
+    hence research start "<idea>"    ask Hence to research an idea (20 to 40 minutes; counts toward your daily limit)
+    hence research status <run>      how a research run is going
+    hence research list              what is in progress and what recently finished
     hence tools                      everything the server offers right now
     hence call <tool> --arg k=v      any tool, including ones newer than this release
 
@@ -92,6 +95,21 @@ def _parser():
     sub.add_parser('logout', help='disconnect this terminal', parents=[common])
     sub.add_parser('whoami', help='the Hence account this terminal is connected to', parents=[common])
     sub.add_parser('tools', help='everything the server offers right now', parents=[common])
+
+    research = sub.add_parser('research', help='Hence research: start it, or follow it (needs hence login)', parents=[common])
+    rsub = research.add_subparsers(dest='what', metavar='start|status|list')
+    start = rsub.add_parser('start', help='ask Hence to research an idea; counts toward your daily limit', parents=[common])
+    start.add_argument('belief', nargs='+', help='the idea, in your own words')
+    start.add_argument('--guidance', help='how you want it built: constraints, emphasis, what to avoid')
+    start.add_argument('--must-include', action='append', default=[], metavar='MARKET_ID', help='a market that must be in the basket (repeatable)')
+    start.add_argument('--exclude', action='append', default=[], metavar='MARKET_ID', help='a market that must not be in the basket (repeatable)')
+    start.add_argument('--basket', choices=['perps', 'spot'], help='where to build it; leave out and Hence picks')
+    start.add_argument('--wait', action='store_true', help='stay and report when it finishes (checks once a minute)')
+    start.add_argument('--yes', action='store_true', help='do not ask before spending one of your daily research runs')
+    status = rsub.add_parser('status', help='how a research run is going', parents=[common])
+    status.add_argument('run', help='the run id `hence research start` printed')
+    status.add_argument('--wait', action='store_true', help='stay and report when it finishes (checks once a minute)')
+    rsub.add_parser('list', help='what is in progress and what recently finished', parents=[common])
 
     call = sub.add_parser('call', help='call any tool by name', parents=[common])
     call.add_argument('tool')
@@ -216,7 +234,34 @@ def _call_signed_in(server, tool, args, store, sender):
             return Client(server, token=token, **kw).call(tool, args)
 
 
-def run(argv, out=None, err=None, store=None, sender=None, open_browser=None, stdin=None, confirm=None):
+WAIT_EVERY_S = 60
+WAIT_LIMIT_S = 60 * 60          # research takes 20 to 40 minutes; past an hour, stop watching and say so
+
+
+def _follow(server, run_id, store, sender, err, sleep, clock):
+    """Watch a run until Hence says it finished, printing what it is doing when that changes.
+    A failed check does not end the watch: the run is still going whether or not we can see it."""
+    started, last = clock(), None
+    while True:
+        try:
+            run = _call_signed_in(server, 'get_thesis_research', {'run_id': run_id}, store, sender)
+        except SignInNeeded:
+            raise
+        except CliError as e:
+            run = None
+            print('hence: could not check just now (%s). Still watching.' % e, file=err)
+        if run and run.get('finished') is True:
+            return run
+        now = (run or {}).get('now') or (run or {}).get('status')
+        if now and now != last:
+            print('  %s' % now, file=err)
+            last = now
+        if clock() - started > WAIT_LIMIT_S:
+            raise CliError('Still running after an hour. It carries on without this terminal: check later with `hence research status %s`.' % run_id)
+        sleep(WAIT_EVERY_S)
+
+
+def run(argv, out=None, err=None, store=None, sender=None, open_browser=None, stdin=None, confirm=None, sleep=None, clock=None):
     """The command, with its edges injectable for tests. Returns the exit code."""
     out, err = out or sys.stdout, err or sys.stderr
     parser = _parser()
@@ -251,6 +296,43 @@ def run(argv, out=None, err=None, store=None, sender=None, open_browser=None, st
             found = Client(server, **kw).tools()
             print(json.dumps(found, indent=2, ensure_ascii=False) if ns.json else render.tools(found), file=out)
             return 0
+        if ns.command == 'research':
+            import time as _time
+            sleep, clock = sleep or _time.sleep, clock or _time.time
+            if ns.what == 'list':
+                print(render.show('get_thesis_research', _call_signed_in(server, 'get_thesis_research', {}, store, sender), as_json=ns.json), file=out)
+                return 0
+            if ns.what == 'status':
+                found = UUID.search(ns.run)
+                if not found:
+                    raise CliError('"%s" is not a research run id.' % ns.run)
+                run_id = found.group(0).lower()
+                state = _follow(server, run_id, store, sender, err, sleep, clock) if ns.wait else \
+                    _call_signed_in(server, 'get_thesis_research', {'run_id': run_id}, store, sender)
+                print(render.show('get_thesis_research', state, as_json=ns.json), file=out)
+                return 0
+            if ns.what != 'start':
+                raise CliError('Say `hence research start "<idea>"`, `hence research status <run>` or `hence research list`.')
+            request = {k: v for k, v in (('belief', ' '.join(ns.belief)), ('guidance', ns.guidance), ('must_include', ns.must_include),
+                                         ('exclude', ns.exclude), ('basket', ns.basket)) if v}
+            if not ns.yes:
+                # a run spends one of the person's daily research runs: they say yes first
+                print('Hence will research: %s' % request['belief'], file=err)
+                ask = confirm or (lambda: (stdin or sys.stdin).isatty() and input(
+                    'This takes 20 to 40 minutes and uses one of your daily research runs. Start it? [y/N] ').strip().lower() in ('y', 'yes'))
+                if not ask():
+                    raise CliError('Not started. To start without being asked, add --yes.')
+            started = _call_signed_in(server, 'start_thesis_research', request, store, sender)
+            if started.get('started') is not True:
+                print(render.show('start_thesis_research', started, as_json=ns.json), file=out)
+                return 1
+            if not ns.wait:
+                print(render.show('start_thesis_research', started, as_json=ns.json), file=out)
+                return 0
+            print(render.show('start_thesis_research', started), file=err)
+            state = _follow(server, started['run']['run_id'], store, sender, err, sleep, clock)
+            print(render.show('get_thesis_research', state, as_json=ns.json), file=out)
+            return 0 if state.get('thesis_id') else 1
         if ns.command == 'draft':
             if ns.what == 'new':
                 print(json.dumps(TEMPLATE, indent=2), file=out)
