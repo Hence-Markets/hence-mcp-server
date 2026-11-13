@@ -503,10 +503,109 @@ def get_my_portfolio(args, up, account):
     return out
 
 
-def _tool(name, title, description, schema, handler, scope=None):
+# ── a thesis the agent writes itself ──────────────────────────────────────────────────────────
+# The agent does the thinking, with its own model and sources, and hands Hence a thesis in the
+# format below. Hence checks it against its own listings and, if the person agrees, puts it in
+# their library as a private draft. The person opens it in Hence and saves it themselves: that
+# save, not anything here, is what makes it a thesis. Hence's research pipeline is not involved
+# and nothing here is labelled as Hence research.
+
+THESIS_FORMAT = 'hence-thesis/1'
+THESIS = {
+    'type': 'object',
+    'description': 'A thesis in the %s format. Read get_thesis_guide before writing one.' % THESIS_FORMAT,
+    'required': ['format', 'title', 'summary', 'mechanism', 'why_now', 'counter_case', 'invalidation', 'horizon_days', 'holdings'],
+    'properties': {
+        'format': {'type': 'string', 'enum': [THESIS_FORMAT]},
+        'title': {'type': 'string', 'maxLength': 180},
+        'summary': {'type': 'string', 'maxLength': 1000},
+        'mechanism': {'type': 'string', 'maxLength': 4000},
+        'why_now': {'type': 'string', 'maxLength': 2000},
+        'counter_case': {'type': 'string', 'maxLength': 2000},
+        'invalidation': {'type': 'string', 'maxLength': 2000},
+        'horizon_days': {'type': 'integer', 'minimum': 1, 'maximum': 10950},
+        'topic': {'type': 'string', 'maxLength': 80},
+        'cash_weight_pct': {'type': 'number', 'minimum': 0, 'exclusiveMaximum': 100},
+        'holdings': {'type': 'array', 'minItems': 1, 'maxItems': 20, 'items': {
+            'type': 'object', 'required': ['market_id', 'side', 'weight_pct', 'role', 'reason'], 'properties': {
+                'market_id': {'type': 'string', 'description': 'Exactly as search_markets returned it.'},
+                'side': {'type': 'string', 'enum': ['long', 'short']},
+                'weight_pct': {'type': 'number', 'exclusiveMinimum': 0, 'maximum': 100},
+                'role': {'type': 'string', 'enum': ['core', 'second_order', 'hedge']},
+                'reason': {'type': 'string', 'maxLength': 1000}}}},
+        'sources': {'type': 'array', 'maxItems': 30, 'items': {
+            'type': 'object', 'required': ['title', 'url'], 'properties': {
+                'title': {'type': 'string'}, 'url': {'type': 'string'}, 'publisher': {'type': 'string'},
+                'published_at': {'type': 'string', 'description': 'YYYY-MM-DD'}}}},
+        'checkpoints': {'type': 'array', 'maxItems': 5, 'items': {
+            'type': 'object', 'required': ['by', 'observable', 'direction'], 'properties': {
+                'by': {'type': 'string', 'description': 'YYYY-MM-DD, after today and within 12 months'},
+                'observable': {'type': 'string', 'maxLength': 300},
+                'direction': {'type': 'string', 'enum': ['supports', 'contradicts']}}}},
+    },
+}
+GUIDE = {'type': 'object', 'additionalProperties': False, 'properties': {}}
+CHECK_THESIS = {'type': 'object', 'additionalProperties': False, 'required': ['thesis'], 'properties': {'thesis': THESIS}}
+SAVE_THESIS = {'type': 'object', 'additionalProperties': False, 'required': ['thesis'], 'properties': {
+    'thesis': {'type': 'object', 'description': 'The same object check_thesis accepted, unchanged.'}}}
+
+_GUIDE = None
+
+
+def _guide_text():
+    """data/write-a-thesis.md, read once. The same file ships in the skill (tests pin that the
+    two copies are identical), so an agent reads one method whichever way it arrives."""
+    global _GUIDE
+    if _GUIDE is None:
+        with open(os.path.join(config.data_dir(), 'write-a-thesis.md'), encoding='utf-8') as f:
+            _GUIDE = f.read()
+    return _GUIDE
+
+
+def get_thesis_guide(args, up):
+    _unknown_keys(args, GUIDE)
+    try:
+        guide = _guide_text()
+    except OSError:
+        raise ToolError('The guide could not be read on this server. Nothing else is affected.')
+    return {'format': THESIS_FORMAT, 'guide': guide,
+            'steps': ['search_markets for every holding and copy its market_id', 'check_thesis until it has no problems',
+                      'show the person the thesis and ask', 'save_thesis_draft', 'give the person the url'],
+            'note': 'A thesis you write is yours, not Hence research. Hence checks it and stores it as a private draft; '
+                    'the person reviews it in Hence and saves it there. Nothing here places a trade.'}
+
+
+def _thesis_arg(args, schema):
+    _unknown_keys(args, schema)
+    thesis = args.get('thesis')
+    if not isinstance(thesis, dict):
+        raise ToolError('`thesis` must be an object in the %s format. Read get_thesis_guide first.' % THESIS_FORMAT)
+    return thesis
+
+
+def check_thesis(args, up, account):
+    """Hence's verdict on a thesis the agent wrote. Saves nothing."""
+    out = shape.thesis_check(account.post('/api/agents/v1/theses/check', _thesis_arg(args, CHECK_THESIS)))
+    if out is None:
+        raise appauth.Unavailable('Hence gave an answer that could not be read (thesis check)')
+    return out
+
+
+def save_thesis_draft(args, up, account):
+    """Put the thesis in the person's Hence library as a private draft. It is checked again
+    first; a thesis with problems is not saved."""
+    out = shape.thesis_check(account.post('/api/agents/v1/theses/drafts', _thesis_arg(args, SAVE_THESIS)))
+    if out is None:
+        raise appauth.Unavailable('Hence gave an answer that could not be read (thesis draft)')
+    return out
+
+
+def _tool(name, title, description, schema, handler, scope=None, writes=False):
     tool = {
         'name': name, 'title': title, 'description': description, 'inputSchema': schema,
-        'annotations': {'title': title, 'readOnlyHint': True, 'destructiveHint': False,
+        # writes: this tool changes something for the person (hosts ask before running it).
+        # Saving the same thesis twice updates one draft, so it is idempotent; nothing is deleted.
+        'annotations': {'title': title, 'readOnlyHint': not writes, 'destructiveHint': False,
                         'idempotentHint': True, 'openWorldHint': True},
         'handler': handler,
     }
@@ -536,6 +635,11 @@ TOOLS = [
           'stocks, indices, pre-IPO valuations, rates) with live price, 24h change, funding and open interest, and '
           'spot tokens on Robinhood Chain. A null figure means it was not read, not that it is zero.',
           SEARCH_MARKETS, search_markets),
+    _tool('get_thesis_guide', 'How to write a Hence thesis',
+          'Read this before writing a thesis yourself: the method (claim, mechanism, exposures, weights, sources, '
+          'checkpoints) and the %s format. Use it when the person has a view of their own or wants a basket shaped '
+          'to their constraints, instead of asking Hence to research one.' % THESIS_FORMAT,
+          GUIDE, get_thesis_guide),
 ]
 
 BY_NAME = {t['name']: t for t in TOOLS}
@@ -564,6 +668,17 @@ ACCOUNT_TOOLS = [
           'positions). Never present it as a total. If `positions.complete` is false or a section is in `unavailable`, '
           'say what could not be read; a null is unknown, never zero. Needs their Hence account connected.',
           GET_MY_PORTFOLIO, get_my_portfolio, scope='portfolio:read'),
+    _tool('check_thesis', 'Check a thesis you wrote',
+          'Have Hence check a thesis you wrote in the %s format (see get_thesis_guide). Saves nothing. Returns every '
+          'problem at once, each naming the field to change, warnings the person should hear, and the thesis as Hence '
+          'would store it, with each holding named from Hence\'s own listings. Fix the problems and check again.' % THESIS_FORMAT,
+          CHECK_THESIS, check_thesis, scope='theses:write'),
+    _tool('save_thesis_draft', 'Save a thesis as a draft',
+          'Put a thesis you wrote into the person\'s Hence library as a private draft. Only after check_thesis has no '
+          'problems AND the person has seen the thesis and agreed. It does not create, publish or trade anything: the '
+          'person opens the returned url in Hence, reviews the draft and saves it there. It is labelled as written by '
+          'you, not by Hence. Saving the same thesis again updates the same draft.',
+          SAVE_THESIS, save_thesis_draft, scope='theses:write', writes=True),
 ]
 
 
