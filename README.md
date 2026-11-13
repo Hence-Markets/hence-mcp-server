@@ -9,9 +9,10 @@ spot tokens and outcome markets, and tracks it. This server is a small
 [Model Context Protocol](https://modelcontextprotocol.io) server (Streamable HTTP) in front of
 the Hence app.
 
-**This version is read-only.** It holds no key, no database and no user data. Every tool reads
-something the Hence app already shows a signed-out visitor. It cannot create an account, a
-thesis or a trade; to act on anything, a person opens the returned link in Hence.
+**This version is read-only.** It holds no key to anyone's money and no database. Its public
+tools read what the Hence app already shows a signed-out visitor. A person can also connect
+their Hence account, and then one more tool reads their username. It cannot create an account,
+a thesis or a trade; to act on anything, a person opens the returned link in Hence.
 
 > This replaces the earlier TypeScript server (v0.1), which wrapped a previous Hence API that
 > no longer exists. Its tool names (`hence_start_market_workflow` and the rest) are gone.
@@ -25,8 +26,40 @@ thesis or a trade; to act on anything, a person opens the returned link in Hence
 | `get_featured_theses` | Today's featured selection |
 | `search_markets` | What trades on Hence and where: perpetuals with live price, funding and open interest, and Robinhood Chain spot tokens |
 
-Four tools on purpose. A caller pays for every tool description on every turn; the whole list
+With sign-in switched on there is a fifth:
+
+| Tool | What it reads | Needs |
+|---|---|---|
+| `get_my_account` | The connected person's Hence username | Their Hence account connected, permission `account:read` |
+
+Few tools on purpose. A caller pays for every tool description on every turn; the whole list
 is about a thousand tokens.
+
+## Connecting a Hence account
+
+Signing in happens on Hence, not here. This server is an OAuth 2.1 resource server; the Hence
+app is the authorization server.
+
+1. A client calls a signed-in tool with no credential and gets `401` with a
+   `WWW-Authenticate` header pointing at `/.well-known/oauth-protected-resource/mcp`.
+2. That document names the Hence app. The client sends the person there; they sign in as
+   usual, see what the agent is asking for, and press Allow.
+3. The client comes back with a bearer token. This server asks the Hence app, once, who the
+   token speaks for. The app answers only for a token issued for this server's own address,
+   and only while the person has not disconnected the agent in their Hence settings.
+4. Reads of the person's data are made under that connection and signed with this server's
+   own secret. **The person's token is never forwarded to a data route.**
+
+What each failure means, because they are not the same thing to a person:
+
+| The app says | This server answers | The person |
+|---|---|---|
+| The token is unknown, expired, revoked or for another server | `401`, `error="invalid_token"` | Connects again |
+| The permission was not given | `403`, `error="insufficient_scope"` | Is asked for it |
+| Nothing (timeout, 5xx) | A tool error: "try again shortly" | Keeps their connection |
+
+An unanswered check is never turned into "sign in again": that would throw away a good
+connection. A disconnect takes effect on the next call, not when the token expires.
 
 ## What the server promises
 
@@ -85,6 +118,10 @@ docker build -t hence-mcp-server . && docker run --rm -p 127.0.0.1:4340:4340 -e 
 | `HENCE_MCP_RATE_PER_MIN` | `300` | Requests per client address per minute. A flood guard, not a per-person quota |
 | `HENCE_MCP_CLIENT_IP_HEADER` | empty | The header a trusted proxy uses to state the real caller, e.g. `CF-Connecting-IP`. Empty means the connection's own address is used; a header anyone can send is never believed by default |
 | `HENCE_MCP_ALLOWED_ORIGINS` | the public base | Browser origins allowed to call. Server-side clients send no `Origin` and are unaffected; `localhost` is always allowed |
+| `HENCE_MCP_ACCOUNTS` | `0` | Strictly `1` turns sign-in on. It also needs the secret below; with either missing, the signed-in tool is not listed and no sign-in is advertised |
+| `HENCE_MCP_GATEWAY_SECRET` | unset | The secret this server signs its calls to the Hence app with, at least 32 characters. The app holds the same value |
+| `HENCE_MCP_RESOURCE` | `https://mcp.hence.markets/mcp` | This server's own address. A credential is issued for exactly this address |
+| `HENCE_AUTH_ISSUER` | `https://app.hence.markets` | Who signs people in |
 
 ## Protocol
 
@@ -106,15 +143,17 @@ python -m unittest discover -s tests -t .
 
 No network and no dependencies: the Hence app is a stub, and the fixtures keep the real
 structure with no real people or user-written text. One test pins the read-only promise on
-the tool list and on the source itself (one module may talk to the network, and all it can
-send is a `GET`), so adding a write is a decision made on purpose. CI also builds the image
+the tool list and on the source itself: two modules may talk to the network, one can only
+send a `GET`, and the other can reach only the paths it lists. Adding a path is a decision
+made on purpose. CI also builds the image
 and runs `scripts/test_container.sh` against it.
 
 ## Layout
 
 ```
 gateway/config.py     settings
-gateway/upstream.py   reads of the Hence app, with a short cache
+gateway/upstream.py   public reads of the Hence app, with a short cache
+gateway/appauth.py    the signed-in half: who a token speaks for, and signed reads of that account
 gateway/shape.py      pure mappers from the app's payloads to tool results
 gateway/tools.py      the four tools
 gateway/protocol.py   MCP, both eras, no sockets
@@ -125,8 +164,7 @@ data/                 display names for a few venue contracts
 
 ## What comes next
 
-- **Connect your account.** A consent screen in Hence where you let an agent act for you,
-  with scopes, limits and a page to revoke it.
-- **Create a thesis** from a belief, and read your own portfolio.
+- **More to read once connected**: your theses and your portfolio.
+- **Create a thesis** from a belief.
 - **Propose a trade.** The agent prepares a basket order; you review and sign it in Hence.
   This server will never sign anything or hold a key.

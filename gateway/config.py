@@ -52,6 +52,31 @@ def allowed_origins():
     return {o.strip().rstrip('/').lower() for o in raw.split(',') if o.strip()}
 
 
+def gateway_secret():
+    """The secret this server signs its calls to the Hence app with (the app holds the same
+    value). Shorter than 32 characters = not configured."""
+    s = _env('HENCE_MCP_GATEWAY_SECRET')
+    return s if len(s) >= 32 else ''
+
+
+def accounts_active():
+    """Whether signed-in tools exist. Needs the switch AND the secret: with either missing the
+    account tools are not listed and no sign-in is advertised, so a half-configured server is
+    a public read-only server, never one that asks people to sign in and then fails."""
+    return _env('HENCE_MCP_ACCOUNTS', '0') == '1' and bool(gateway_secret())
+
+
+def resource():
+    """This server's own canonical address. A person's credential is issued for exactly this
+    address, and a credential issued for any other is refused."""
+    return _env('HENCE_MCP_RESOURCE', 'https://mcp.hence.markets/mcp').rstrip('/')
+
+
+def auth_issuer():
+    """Who signs people in: the Hence app."""
+    return _env('HENCE_AUTH_ISSUER', 'https://app.hence.markets').rstrip('/')
+
+
 def trusted_client_header():
     """The header a trusted proxy in front of this server uses to state the real caller, e.g.
     CF-Connecting-IP behind Cloudflare. Empty (the default) = trust nothing and use the
