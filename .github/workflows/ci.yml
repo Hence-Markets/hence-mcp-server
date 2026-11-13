@@ -4,20 +4,25 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  build-test:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-python@v5
         with:
-          version: 10
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-      - run: pnpm build
-      - run: pnpm test
-
+          python-version: '3.14'
+      - name: Tests (no network, no dependencies; a skipped test fails the run)
+        run: |
+          python - <<'PY'
+          import sys, unittest
+          result = unittest.TextTestRunner(verbosity=1).run(unittest.defaultTestLoader.discover('tests', pattern='test_*.py', top_level_dir='.'))
+          sys.exit(0 if result.wasSuccessful() and not result.skipped else 1)
+          PY
+      - name: Build the image and smoke-test it
+        run: |
+          docker build -t hence-mcp-server:check .
+          sh scripts/test_container.sh

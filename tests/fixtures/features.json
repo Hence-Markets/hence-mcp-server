@@ -1,0 +1,145 @@
+{
+ "edition": "2026-11-13",
+ "candidates": [
+  {
+   "id": "11111111-1111-4111-8111-111111111111",
+   "legs": [
+    {
+     "kind": "perp",
+     "role": "core",
+     "side": "short",
+     "venue": "Hyperliquid",
+     "symbol": "xyz:SMH",
+     "weight": 13.0,
+     "can_short": true,
+     "instrument_id": "perp:xyz:SMH",
+     "id": "leg-0",
+     "name": "xyz:SMH",
+     "reason": "Fixture reason 0."
+    },
+    {
+     "kind": "perp",
+     "role": "core",
+     "side": "short",
+     "venue": "Hyperliquid",
+     "symbol": "xyz:MU",
+     "weight": 10.0,
+     "can_short": true,
+     "instrument_id": "perp:xyz:MU",
+     "id": "leg-1",
+     "name": "xyz:MU",
+     "reason": "Fixture reason 1."
+    },
+    {
+     "kind": "perp",
+     "role": "core",
+     "side": "short",
+     "venue": "Hyperliquid",
+     "symbol": "xyz:NVDA",
+     "weight": 14.0,
+     "can_short": true,
+     "instrument_id": "perp:xyz:NVDA",
+     "id": "leg-2",
+     "name": "xyz:NVDA",
+     "reason": "Fixture reason 2."
+    }
+   ],
+   "title": "Fixture featured 1",
+   "topic": "AI & compute",
+   "venue": "perp",
+   "belief": "Fixture belief 1",
+   "source": "personal",
+   "summary": "Fixture featured summary 1.",
+   "version": 2,
+   "history": {
+    "to": "2026-11-12",
+    "from": "2026-10-14",
+    "curve": [
+     {
+      "date": "2026-10-14",
+      "value": 100.0,
+      "benchmark": 100.0
+     },
+     {
+      "date": "2026-10-15",
+      "value": 98.16208857549155,
+      "benchmark": 100.6870789957134
+     }
+    ],
+    "version": 2,
+    "complete": true,
+    "return_pct": 3.5209089994502563
+   },
+   "author_id": "did:privy:fixture-author",
+   "mechanism": "fixture",
+   "author_name": "@fixture_author",
+   "author_profile": true,
+   "evidence_count": 6,
+   "saved": false
+  },
+  {
+   "id": "22222222-2222-4222-8222-222222222222",
+   "legs": [
+    {
+     "kind": "perp",
+     "role": "core",
+     "side": "long",
+     "venue": "Hyperliquid",
+     "symbol": "xyz:LLY",
+     "weight": 67.0,
+     "can_short": true,
+     "instrument_id": "perp:xyz:LLY",
+     "id": "leg-0",
+     "name": "Fixture Name 0",
+     "reason": "Fixture reason 0."
+    },
+    {
+     "kind": "perp",
+     "role": "core",
+     "side": "long",
+     "venue": "Hyperliquid",
+     "symbol": "xyz:HIMS",
+     "weight": 33.0,
+     "can_short": true,
+     "instrument_id": "perp:xyz:HIMS",
+     "id": "leg-1",
+     "name": "Fixture Name 1",
+     "reason": "Fixture reason 1."
+    }
+   ],
+   "title": "Fixture featured 2",
+   "topic": "Other ideas",
+   "venue": "perp",
+   "belief": "Fixture belief 2",
+   "source": "personal",
+   "summary": "Fixture featured summary 2.",
+   "version": 3,
+   "history": {
+    "to": "2026-11-12",
+    "from": "2026-10-14",
+    "curve": [
+     {
+      "date": "2026-10-14",
+      "value": 100.0,
+      "benchmark": 100.0
+     },
+     {
+      "date": "2026-10-15",
+      "value": 104.01954038250143,
+      "benchmark": 100.6870789957134
+     }
+    ],
+    "version": 3,
+    "complete": false,
+    "return_pct": 2.844512052056956
+   },
+   "author_id": "did:privy:fixture-author",
+   "mechanism": "fixture",
+   "author_name": "@fixture_author",
+   "author_profile": true,
+   "evidence_count": 5,
+   "saved": false
+  }
+ ],
+ "warming": false
+}

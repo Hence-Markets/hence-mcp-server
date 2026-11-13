@@ -1,0 +1,25 @@
+{
+ "kind": "related",
+ "topic": "all",
+ "topics": [],
+ "items": [
+  {
+   "id": "22222222-2222-4222-8222-222222222222",
+   "version": 1,
+   "title": "Fixture related",
+   "author_name": "Team member",
+   "legs": [
+    {
+     "instrument_id": "perp:BTC"
+    }
+   ]
+  },
+  {
+   "id": "not-a-uuid",
+   "version": 1,
+   "title": "Bad id row",
+   "author_name": "x",
+   "legs": []
+  }
+ ]
+}

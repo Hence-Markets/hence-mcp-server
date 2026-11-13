@@ -1,0 +1,39 @@
+{
+ "ts": 1794552390,
+ "rows": [
+  {
+   "key": "4663:0x0000000000000000000000000000000000000001",
+   "address": "0x0000000000000000000000000000000000000001",
+   "chainId": 4663,
+   "sym": "WETH",
+   "name": "Fixture token WETH",
+   "cls": "crypto",
+   "auto": false,
+   "price": 123.45,
+   "daily": -1.5,
+   "vol": 1000.0,
+   "cap": 2000.0,
+   "fdv": 2000.0,
+   "liq": 500.0,
+   "holders": 10.0,
+   "suspiciousPct": null
+  },
+  {
+   "key": "4663:0x0000000000000000000000000000000000000002",
+   "address": "0x0000000000000000000000000000000000000002",
+   "chainId": 4663,
+   "sym": "NVDA",
+   "name": "Fixture token NVDA",
+   "cls": "equity",
+   "auto": false,
+   "price": 123.45,
+   "daily": -1.5,
+   "vol": 1000.0,
+   "cap": 2000.0,
+   "fdv": 2000.0,
+   "liq": 500.0,
+   "holders": 10.0,
+   "suspiciousPct": null
+  }
+ ]
+}
