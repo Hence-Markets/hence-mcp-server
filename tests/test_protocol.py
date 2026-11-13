@@ -58,7 +58,7 @@ class Modern(Base):
         r = out['result']
         self.assertEqual(r['resultType'], 'complete')
         self.assertEqual(r['supportedVersions'][0], V)
-        self.assertEqual(r['capabilities'], {'tools': {'listChanged': False}})
+        self.assertEqual(r['capabilities'], {'tools': {'listChanged': False}, 'resources': {'listChanged': False, 'subscribe': False}})
         self.assertEqual(r['_meta']['io.modelcontextprotocol/serverInfo']['name'], 'hence')
         self.assertIn('Nothing here creates an account, publishes a thesis, places a trade or moves money', r['instructions'])
         self.assertEqual((r['cacheScope'], isinstance(r['ttlMs'], int)), ('public', True))
@@ -124,7 +124,7 @@ class Modern(Base):
         self.assertEqual(out['error']['data'], {'supported': list(protocol.SUPPORTED), 'requested': '2030-01-01'})
 
     def test_an_unknown_method_is_a_404_with_a_json_rpc_body(self):
-        for method in ('resources/list', 'prompts/list', 'ping', 'initialize'):
+        for method in ('prompts/list', 'resources/subscribe', 'resources/templates/list', 'ping', 'initialize'):
             status, out = self.run_(modern(method))
             self.assertEqual((status, out['error']['code']), (404, -32601), method)
 
@@ -157,7 +157,7 @@ class Legacy(Base):
         self.assertIn('tools', out['result'])
 
     def test_an_unknown_method_is_a_json_rpc_error(self):
-        status, out = self.run_(legacy('resources/list'))
+        status, out = self.run_(legacy('prompts/list'))
         self.assertEqual((status, out['error']['code']), (200, -32601))
 
     def test_a_modern_header_without_the_body_version_is_refused_not_guessed(self):

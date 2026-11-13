@@ -77,6 +77,20 @@ which must match the app's `AGENT_RESEARCH_ACTIVE`), its own permission, and cou
 person's daily research limit. The same request on the same day reaches the same run, so a
 retry never starts a second one.
 
+## Cards inside the chat
+
+In a host that supports MCP Apps (Claude, Claude Desktop, VS Code Copilot and others), a
+thesis is drawn in the conversation instead of only being described: its holdings as bars, the
+price history as figures, the checkpoints, and a button that opens it in Hence. The five tools
+that return a thesis or a list of theses point at one page, `ui://hence/thesis-card`
+(`data/thesis-card.html`, served by `gateway/cards.py`).
+
+The page is self-contained. It loads nothing and calls nothing (its content policy is empty),
+puts every value on the page as text and never as markup, shows an unread figure as "n/a", and
+shows Hence's own sentence when a tool could not answer. The only thing it asks the host for
+is to open a link. A host without card support ignores it: every tool still returns its whole
+answer as text.
+
 ## The `hence` command
 
 The same tools from a terminal, for scripts and for coding agents without an MCP client. It is
@@ -267,7 +281,8 @@ gateway/tools.py      the four tools
 gateway/protocol.py   MCP, both eras, no sockets
 gateway/limits.py     the flood guard
 gateway/app.py        the HTTP server
-data/                 display names for a few venue contracts
+gateway/cards.py      the card a chat host can draw a thesis with (MCP Apps)
+data/                 display names for a few venue contracts, the thesis guide, the card's page
 hence_cli/            the `hence` command: a client of this server (not in the image)
 skills/hence/         the skill for coding agents
 .claude-plugin/       this repository as a Claude Code plugin and its own marketplace

@@ -759,5 +759,11 @@ def find(name):
 
 
 def public_definition(tool):
-    """What tools/list sends: everything but the handler and the server-side permission."""
-    return {k: v for k, v in tool.items() if k not in ('handler', 'scope')}
+    """What tools/list sends: everything but the handler and the server-side permission, plus
+    the card that can draw its answer in a chat, when it has one (cards.py)."""
+    from . import cards
+    out = {k: v for k, v in tool.items() if k not in ('handler', 'scope')}
+    meta = cards.tool_meta(tool['name'])
+    if meta:
+        out['_meta'] = meta
+    return out
