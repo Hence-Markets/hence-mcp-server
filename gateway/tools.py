@@ -600,6 +600,56 @@ def save_thesis_draft(args, up, account):
     return out
 
 
+# ── Hence's own research, started for the person ────────────────────────────────────────────
+# The 20 to 40 minute build the app runs when a person types an idea. It is the person's run,
+# counted against their daily limit, and the one tool here that spends Hence's money: it is
+# offered only when its own switch is on (config.research_active).
+
+START_RESEARCH = {
+    'type': 'object',
+    'additionalProperties': False,
+    'required': ['belief'],
+    'properties': {
+        'belief': {'type': 'string', 'minLength': 2, 'maxLength': 6000,
+                   'description': 'The idea to research, in the person\'s own words where possible.'},
+        'guidance': {'type': 'string', 'maxLength': 2000,
+                     'description': 'How the person wants it built: constraints, what to emphasise, what to avoid.'},
+        'must_include': {'type': 'array', 'maxItems': 12, 'items': {'type': 'string'},
+                         'description': 'market_ids (from search_markets) that must be in the basket.'},
+        'exclude': {'type': 'array', 'maxItems': 12, 'items': {'type': 'string'},
+                    'description': 'market_ids (from search_markets) that must not be in the basket.'},
+        'basket': {'type': 'string', 'enum': ['perps', 'spot'], 'description': 'Where to build it. Leave out and Hence picks.'},
+    },
+}
+GET_RESEARCH = {
+    'type': 'object',
+    'additionalProperties': False,
+    'properties': {'run_id': {'type': 'string', 'description': 'From start_thesis_research. Leave out to list what is in progress and what recently finished.'}},
+}
+
+
+def start_thesis_research(args, up, account):
+    _unknown_keys(args, START_RESEARCH)
+    out = shape.research_start(account.post('/api/agents/v1/research', args))
+    if out is None:
+        raise appauth.Unavailable('Hence gave an answer that could not be read (research). Ask again: the same request reaches the same run')
+    return out
+
+
+def get_thesis_research(args, up, account):
+    _unknown_keys(args, GET_RESEARCH)
+    run_id = _string(args, 'run_id', 64).lower()
+    if not run_id:
+        out = shape.research_list(account.get('/api/agents/v1/research'))
+    elif not shape.UUID_RE.match(run_id):
+        raise ToolError('`run_id` is not a research run id. Use the one start_thesis_research returned.')
+    else:
+        out = shape.research_run(account.get('/api/agents/v1/research/' + run_id))
+    if out is None:
+        raise appauth.Unavailable('Hence gave an answer that could not be read (research)')
+    return out
+
+
 def _tool(name, title, description, schema, handler, scope=None, writes=False):
     tool = {
         'name': name, 'title': title, 'description': description, 'inputSchema': schema,
@@ -679,12 +729,29 @@ ACCOUNT_TOOLS = [
           'person opens the returned url in Hence, reviews the draft and saves it there. It is labelled as written by '
           'you, not by Hence. Saving the same thesis again updates the same draft.',
           SAVE_THESIS, save_thesis_draft, scope='theses:write', writes=True),
+    _tool('get_thesis_research', 'Follow Hence research',
+          'The state of a research run Hence is doing for the person: queued, running (with what it is doing now), or '
+          'finished, with the thesis and its url once there is one. Without a run_id, lists what is in progress and what '
+          'recently finished. A run takes 20 to 40 minutes: check back, do not wait in a loop. Hence also notifies the '
+          'person in the app when it finishes.',
+          GET_RESEARCH, get_thesis_research, scope='theses:read'),
+]
+
+# Offered only while config.research_active(): the one tool that spends Hence's money.
+RESEARCH_TOOLS = [
+    _tool('start_thesis_research', 'Ask Hence to research an idea',
+          'Ask Hence to research an idea and build a thesis for the person, the way the app does when they type one. It '
+          'takes 20 to 40 minutes and counts toward the person\'s daily research limit, so ask them first. Steer it with '
+          '`guidance`, `must_include`, `exclude` and `basket`. Returns a run_id: follow it with get_thesis_research. The '
+          'finished thesis is Hence\'s research, saved to their account and shared like any thesis they create. To write '
+          'the thesis yourself instead, at no cost to their limit, see get_thesis_guide.',
+          START_RESEARCH, start_thesis_research, scope='theses:research', writes=True),
 ]
 
 
 def listed():
     """The tools this server offers right now, in a stable order."""
-    return TOOLS + (ACCOUNT_TOOLS if config.accounts_active() else [])
+    return TOOLS + (ACCOUNT_TOOLS if config.accounts_active() else []) + (RESEARCH_TOOLS if config.research_active() else [])
 
 
 def find(name):

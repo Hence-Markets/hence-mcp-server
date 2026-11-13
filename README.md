@@ -29,7 +29,9 @@ person opens the returned link in Hence.
 | `search_markets` | What trades on Hence and where: perpetuals with live price, funding and open interest, and Robinhood Chain spot tokens |
 | `get_thesis_guide` | How to write a Hence thesis yourself: the method and the `hence-thesis/1` format |
 
-With sign-in switched on there are six more, each touching only the connected person's own account:
+With sign-in switched on there are up to eight more, each touching only the connected person's own account.
+Two of them change something: `save_thesis_draft` leaves a draft, and `start_thesis_research` starts the
+person's own research run. Neither publishes on the agent's say-so, trades, or moves money.
 
 | Tool | What it reads | Needs |
 |---|---|---|
@@ -38,7 +40,9 @@ With sign-in switched on there are six more, each touching only the connected pe
 | `get_my_thesis` | One of them in full, with versions and a price history | `theses:read` |
 | `get_my_portfolio` | Open perpetual positions read live, realized trading results, and the last account value Hence recorded. It says what it does not include (cash, spot balances, outcome positions) | `portfolio:read` |
 | `check_thesis` | Hence's verdict on a thesis the agent wrote: every problem at once, warnings, and the thesis as Hence would store it. Saves nothing | `theses:write` |
-| `save_thesis_draft` | Puts that thesis in the person's Hence library as a private draft. The only tool that writes | `theses:write` |
+| `save_thesis_draft` | Puts that thesis in the person's Hence library as a private draft | `theses:write` |
+| `get_thesis_research` | The state of a Hence research run: what it is doing now, or the thesis once there is one. Without a run id, what is in progress and what recently finished | `theses:read` |
+| `start_thesis_research` | Asks Hence to research an idea for the person, steered by their guidance, must-include and exclude lists and venue. Takes 20 to 40 minutes and counts toward their daily limit. Offered only with `HENCE_MCP_RESEARCH=1` | `theses:research` |
 
 Few tools on purpose. A caller pays for every tool description on every turn; the whole list
 is about a thousand tokens.
@@ -59,6 +63,19 @@ its own model and sources, and hand Hence the result:
    what makes it a thesis. Nothing an agent sends becomes one on its own.
 
 This costs Hence no research run, and the person gets a basket shaped to what they asked for.
+
+## Asking Hence to research it
+
+The other way to get a thesis: `start_thesis_research` runs the same build the app runs when a
+person types an idea. It reads the idea, screens the whole catalogue and builds a basket, in
+20 to 40 minutes. The person steers it through their agent with `guidance`, `must_include`,
+`exclude` and `basket`. It returns a run id; `get_thesis_research` says what it is doing and,
+when it finishes, where the thesis is. Hence also notifies the person in the app.
+
+It is the one tool that spends Hence's money, so it has its own switch (`HENCE_MCP_RESEARCH`,
+which must match the app's `AGENT_RESEARCH_ACTIVE`), its own permission, and counts toward the
+person's daily research limit. The same request on the same day reaches the same run, so a
+retry never starts a second one.
 
 ## The `hence` command
 
@@ -82,6 +99,9 @@ hence guide                         # how to write a Hence thesis yourself
 hence draft new > thesis.json       # a blank thesis to fill in
 hence draft check thesis.json       # what is wrong with it; nothing is saved
 hence draft save thesis.json        # save it as a private draft (asks first; --yes to skip)
+hence research start "<idea>"       # ask Hence to research it (asks first; --wait to stay until it is done)
+hence research status <run>         # how a run is going
+hence research list                 # what is in progress and what recently finished
 hence tools                         # everything the server offers right now
 hence call <tool> --arg key=value   # any tool by name
 ```
@@ -207,6 +227,7 @@ docker build -t hence-mcp-server . && docker run --rm -p 127.0.0.1:4340:4340 -e 
 | `HENCE_MCP_ALLOWED_ORIGINS` | the public base | Browser origins allowed to call. Server-side clients send no `Origin` and are unaffected; `localhost` is always allowed |
 | `HENCE_MCP_ACCOUNTS` | `0` | Strictly `1` turns sign-in on. It also needs the secret below; with either missing, the signed-in tool is not listed and no sign-in is advertised |
 | `HENCE_MCP_GATEWAY_SECRET` | unset | The secret this server signs its calls to the Hence app with, at least 32 characters. The app holds the same value |
+| `HENCE_MCP_RESEARCH` | `0` | Strictly `1` offers `start_thesis_research`. Needs sign-in on, and the app's `AGENT_RESEARCH_ACTIVE=1` |
 | `HENCE_MCP_RESOURCE` | `https://mcp.hence.markets/mcp` | This server's own address. A credential is issued for exactly this address |
 | `HENCE_AUTH_ISSUER` | `https://app.hence.markets` | Who signs people in |
 

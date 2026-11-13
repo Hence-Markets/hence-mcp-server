@@ -241,6 +241,37 @@ def check(value):
     return '\n'.join(out) + ('\n\n' + extra if extra else '')
 
 
+def research(value):
+    """`start_thesis_research` and `get_thesis_research`."""
+    if isinstance(value.get('in_progress'), list):
+        out = []
+        rows = [[text(r.get('idea')), text(r.get('stage') or r.get('status')), text(r.get('run_id')), text(r.get('url'))] for r in value['in_progress']]
+        out.append('In progress\n' + table(rows, ['idea', 'stage', 'run', 'open in Hence']) if rows else 'Nothing in progress.')
+        done = [[text(r.get('idea')), text(r.get('result')), text(r.get('at')), text(r.get('url'))] for r in value.get('recently_finished') or []]
+        if done:
+            out.append('\nRecently finished\n' + table(done, ['idea', 'result', 'when', 'open in Hence']))
+        return '\n'.join(out)
+    problems = [p for p in value.get('problems') or [] if isinstance(p, dict)]
+    if problems:
+        return '\n'.join(['%d problem%s. Nothing was started.' % (len(problems), '' if len(problems) == 1 else 's')]
+                         + ['  %s%s' % ((p.get('field') + ': ') if p.get('field') else '', text(p.get('problem'))) for p in problems])
+    run = value.get('run') if isinstance(value.get('run'), dict) else value
+    out = ['%s  [%s]' % (text(run.get('idea')), text(run.get('status')))]
+    if run.get('now'):
+        out.append('  now: ' + run['now'])
+    if run.get('outcome'):
+        out.append('  ' + run['outcome'])
+    if run.get('note'):
+        out.append('  ' + run['note'])
+    out.append('  thesis: %s' % (run['url'] if run.get('url') else ('none' if run.get('finished') else 'not ready yet')))
+    out.append('  run: %s' % text(run.get('run_id')))
+    out.append('  progress: %s' % text(run.get('progress_url')))
+    nxt = value.get('next') or run.get('next')
+    if isinstance(nxt, str):
+        out.append('\n' + nxt)
+    return '\n'.join(out)
+
+
 def guide(value):
     return value.get('guide') if isinstance(value.get('guide'), str) else json.dumps(value, indent=2, ensure_ascii=False)
 
@@ -252,7 +283,8 @@ def tools(found):
 
 VIEWS = {'search_theses': theses, 'get_featured_theses': lambda v: theses(v, with_return=True), 'get_thesis': thesis,
          'search_markets': markets, 'get_my_account': account, 'list_my_theses': my_theses, 'get_my_thesis': my_thesis,
-         'get_my_portfolio': portfolio, 'get_thesis_guide': guide, 'check_thesis': check, 'save_thesis_draft': check}
+         'get_my_portfolio': portfolio, 'get_thesis_guide': guide, 'check_thesis': check, 'save_thesis_draft': check,
+         'start_thesis_research': research, 'get_thesis_research': research}
 
 
 def show(tool, value, as_json=False):

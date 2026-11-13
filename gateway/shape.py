@@ -403,3 +403,54 @@ def thesis_check(data):
     else:
         out['next'] = 'Nothing was saved. Fix every problem, then check again.'
     return out
+
+
+_RUN = ('run_id', 'status', 'finished', 'idea', 'now', 'started_at', 'finished_at', 'thesis_id', 'url', 'progress_url', 'outcome', 'note')
+_STATES = ('queued', 'running', 'complete', 'failed', 'abstained', 'rejected', 'needs_review')
+
+
+def research_run(data):
+    """One research run as the app answered it, with what to do next. None when it is not one.
+    A run is finished only when the app says so, and a thesis is named only when the app named it."""
+    if not isinstance(data, dict) or not UUID_RE.match(str(data.get('run_id') or '')) or data.get('status') not in _STATES \
+            or not isinstance(data.get('finished'), bool):
+        return None
+    if data['finished'] != (data['status'] not in ('queued', 'running')):
+        return None                                  # the two must agree, or neither can be trusted
+    out = {k: data.get(k) for k in _RUN if data.get(k) is not None or k in ('thesis_id', 'url')}
+    if not data['finished']:
+        out['next'] = ('Still running. Research takes 20 to 40 minutes: tell the person, and check again in about ten minutes rather '
+                       'than waiting in a loop. Hence will also notify them in the app when it finishes.')
+    elif data.get('thesis_id'):
+        out['next'] = ('The thesis is ready. Give the person its url. It is Hence research, not yours: read it with get_my_thesis '
+                       'before describing it, and do not state a return it does not report.')
+    else:
+        out['next'] = 'No thesis was created. Tell the person what `outcome` says. They can open progress_url in Hence to see more or retry.'
+    return out
+
+
+def research_start(data):
+    """The app's answer to a request to start research. None when it cannot be read: whether a
+    run started is never guessed."""
+    if not isinstance(data, dict) or not isinstance(data.get('ok'), bool) or not isinstance(data.get('started'), bool):
+        return None
+    problems = [{'field': text(p.get('field')) or '', 'problem': text(p.get('problem'), 400)} for p in data.get('problems') or []
+                if isinstance(p, dict) and text(p.get('problem'))]
+    if not data['ok']:
+        if data['started'] or not problems:
+            return None
+        return {'ok': False, 'started': False, 'problems': problems, 'next': 'Nothing was started. Fix every problem and ask again.'}
+    run = research_run(data.get('run'))
+    if not data['started'] or problems or run is None:
+        return None
+    return {'ok': True, 'started': True, 'problems': [], 'run': run,
+            'next': 'Hence is researching it (run_id above). It takes 20 to 40 minutes and counted toward the person\'s daily limit. '
+                    'Tell them, then follow it with get_thesis_research in about ten minutes. Asking again with the same request today '
+                    'reaches this same run; it does not start another.'}
+
+
+def research_list(data):
+    if not isinstance(data, dict) or not isinstance(data.get('in_progress'), list) or not isinstance(data.get('recently_finished'), list):
+        return None
+    return {'in_progress': [r for r in data['in_progress'] if isinstance(r, dict)],
+            'recently_finished': [r for r in data['recently_finished'] if isinstance(r, dict)]}

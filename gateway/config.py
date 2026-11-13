@@ -66,6 +66,13 @@ def accounts_active():
     return _env('HENCE_MCP_ACCOUNTS', '0') == '1' and bool(gateway_secret())
 
 
+def research_active():
+    """Whether the tool that starts Hence research is offered. Its own switch, because it is the
+    one tool that spends Hence's money; it must match the app's AGENT_RESEARCH_ACTIVE, or the
+    server would ask people for a permission the app will not give."""
+    return accounts_active() and _env('HENCE_MCP_RESEARCH', '0') == '1'
+
+
 def resource():
     """This server's own canonical address. A person's credential is issued for exactly this
     address, and a credential issued for any other is refused."""

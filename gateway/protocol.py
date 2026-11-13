@@ -86,7 +86,7 @@ def resource_metadata_url():
 
 def resource_metadata():
     return {'resource': config.resource(), 'authorization_servers': [config.auth_issuer()],
-            'scopes_supported': sorted({t['scope'] for t in tools.ACCOUNT_TOOLS}),
+            'scopes_supported': sorted({t['scope'] for t in tools.listed() if t.get('scope')}),
             'bearer_methods_supported': ['header'], 'resource_name': config.SERVER_TITLE}
 
 

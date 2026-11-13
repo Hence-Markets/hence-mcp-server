@@ -55,9 +55,10 @@ class ReadOnlyByConstruction(unittest.TestCase):
         self.assertNotRegex(requests_made[0], r"\bmethod\s*=")
         # the signed-in half reaches exactly these, and every one of them is a read of the person's own account
         self.assertEqual(appauth.INTROSPECT, '/api/agents/v1/introspect')
-        self.assertEqual(appauth.ACCOUNT_PATHS, ('/api/agents/v1/whoami', '/api/agents/v1/theses', '/api/agents/v1/portfolio'))
+        self.assertEqual(appauth.ACCOUNT_PATHS, ('/api/agents/v1/whoami', '/api/agents/v1/theses', '/api/agents/v1/portfolio', '/api/agents/v1/research'))
         self.assertEqual([p.pattern for p in appauth.ACCOUNT_PATTERNS],
-                         [r'^/api/agents/v1/theses/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(/performance)?$'])
+                         [r'^/api/agents/v1/theses/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(/performance)?$',
+                          r'^/api/agents/v1/research/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'])
         ok = '11111111-1111-4111-8111-111111111111'
         for good in ('/api/agents/v1/whoami', '/api/agents/v1/theses/' + ok, '/api/agents/v1/theses/%s/performance' % ok):
             self.assertTrue(appauth.allowed(good), good)
@@ -73,7 +74,8 @@ class ReadOnlyByConstruction(unittest.TestCase):
         # The one thing this server sends under a person's connection is a thesis the agent
         # wrote, to be checked or to be put in their library as a private DRAFT. Neither path
         # creates a thesis, publishes one or touches money. A third path here is a decision.
-        self.assertEqual(appauth.WRITE_PATHS, ('/api/agents/v1/theses/check', '/api/agents/v1/theses/drafts'))
+        # ... and a request for Hence to research an idea: the person's own run, under their own daily limit.
+        self.assertEqual(appauth.WRITE_PATHS, ('/api/agents/v1/theses/check', '/api/agents/v1/theses/drafts', '/api/agents/v1/research'))
         self.assertIn("if path not in WRITE_PATHS:\n            raise ValueError", code)
         self.assertLess(code.index('if path not in WRITE_PATHS:'), code.index("self._call('POST', path, grant, body)"))
         for path in appauth.WRITE_PATHS:
@@ -82,8 +84,15 @@ class ReadOnlyByConstruction(unittest.TestCase):
         self.assertLess(code.index('if not allowed(path):'), code.index("self._call('GET', target, grant, None)"))
 
     def test_signed_in_tools_read_except_the_one_that_saves_a_draft(self):
-        writers = [t['name'] for t in tools.ACCOUNT_TOOLS if t['annotations']['readOnlyHint'] is not True]
-        self.assertEqual(writers, ['save_thesis_draft'])            # a second tool that writes is a decision made here
+        writers = [t['name'] for t in tools.ACCOUNT_TOOLS + tools.RESEARCH_TOOLS if t['annotations']['readOnlyHint'] is not True]
+        # a third tool that changes anything is a decision made here: one saves a draft, one starts the person's own research run
+        self.assertEqual(writers, ['save_thesis_draft', 'start_thesis_research'])
+        research = tools.RESEARCH_TOOLS[0]
+        self.assertEqual((research['scope'], [t['name'] for t in tools.RESEARCH_TOOLS]), ('theses:research', ['start_thesis_research']))
+        for said in ('counts toward the person\'s daily research limit', 'ask them first', '20 to 40 minutes', 'get_thesis_guide'):
+            self.assertIn(said, research['description'])
+        for arg in research['inputSchema']['properties']:
+            self.assertNotRegex(arg, r'(?i)wallet|address|user|account|visibility|publish|engine|profile')
         for t in tools.ACCOUNT_TOOLS:
             self.assertIs(t['annotations']['destructiveHint'], False, t['name'])
             self.assertNotRegex(t['name'], r'(trade|order|buy|sell|withdraw|transfer|send|deposit|fund|create|approve|sign|publish)')

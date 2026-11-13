@@ -19,9 +19,9 @@ https://mcp.hence.markets/mcp
 
 Tools: `search_theses`, `get_thesis`, `get_featured_theses`, `search_markets`, and, once the
 person has connected their Hence account, `get_my_account`, `list_my_theses`, `get_my_thesis`,
-`get_my_portfolio`, `check_thesis` and `save_thesis_draft`. `get_thesis_guide` needs no
-account. Call `tools/list` for the current set: the server gains tools without this skill
-changing.
+`get_my_portfolio`, `check_thesis`, `save_thesis_draft`, `get_thesis_research` and, where it
+is switched on, `start_thesis_research`. `get_thesis_guide` needs no account. Call
+`tools/list` for the current set: the server gains tools without this skill changing.
 
 **The `hence` command** (when there is no MCP client, or in a script):
 
@@ -39,6 +39,8 @@ hence guide                         # how to write a Hence thesis yourself
 hence draft new > thesis.json       # a blank thesis to fill in
 hence draft check thesis.json       # what is wrong with it; nothing is saved
 hence draft save thesis.json        # save it as a private draft in their library
+hence research start "<idea>"       # ask Hence to research it (20 to 40 minutes; uses a daily run)
+hence research status <run>         # how a run is going
 hence tools                         # everything the server offers right now
 hence call <tool> --arg key=value   # any tool by name
 ```
@@ -61,6 +63,7 @@ Exit codes: `0` done; `1` Hence could not do it (the reason is on stderr and std
 | "What are my theses?" / "how is my thesis doing?" | `list_my_theses`, then `get_my_thesis` (needs sign-in) |
 | "What am I holding?" / "how have I traded?" | `get_my_portfolio` (needs sign-in) |
 | "Build me a basket for my view" / "make my thesis more defensive" | Write it yourself: read [write-a-thesis.md](write-a-thesis.md), then `check_thesis` and `save_thesis_draft` (needs sign-in) |
+| "Have Hence research this" | `start_thesis_research`, then `get_thesis_research` about ten minutes later (needs sign-in; ask first, it uses one of their daily runs) |
 
 Start broad, then go deep: search first, then `get_thesis` on the one or two that fit.
 
@@ -86,7 +89,11 @@ Start broad, then go deep: search first, then `get_thesis` on the one or two tha
    If `positions.complete` is false, say which wallet or venue could not be read.
 8. **A thesis you write is yours, not Hence's.** Say so. Show it to the person before you
    save it, and tell them it lands as a draft they review and save in Hence.
-9. **Nothing here places a trade or moves money.** If asked to, say that the person does that
+9. **Hence research takes 20 to 40 minutes and uses one of the person's daily runs.** Ask
+   before you start one, tell them how long it takes, and do not wait in a loop: check back
+   about every ten minutes. When they want it now or want it their way, write the thesis
+   yourself instead.
+10. **Nothing here places a trade or moves money.** If asked to, say that the person does that
    in Hence, and give the link.
 
 ## Signing in
