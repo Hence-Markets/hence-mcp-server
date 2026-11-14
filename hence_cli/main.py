@@ -136,7 +136,7 @@ def _parser():
     tbasket.add_argument('--yes', action='store_true', help='do not ask before sending it to your Hence account')
     propose = xsub.add_parser('propose', help='prepare one order (a perpetual, a spot token or one side of an outcome market); you review and sign it in Hence',
                               parents=[common])
-    propose.add_argument('market', help='a market id from `hence markets`: perp:BTC, perp:xyz:NVDA, spot:4663:0x..., hip4:1212:0')
+    propose.add_argument('market', help='a market id from `hence markets`: perp:BTC, perp:xyz:NVDA, spot:4663:0x..., spot:solana:<mint>, hip4:1212:0')
     propose.add_argument('side', choices=['long', 'short', 'buy'], help='long or short for a perpetual; buy for a spot token or an outcome contract')
     propose.add_argument('size', type=float, help="a perpetual: the position's value in US dollars (not the margin). A purchase: the dollars to spend")
     propose.add_argument('--leverage', type=int, help="perpetuals only; leave out to keep your own setting for the market")
@@ -159,7 +159,9 @@ def _arguments(ns):
     """(tool name, arguments) for the command typed. Options left out are not sent, so the
     server's own defaults apply."""
     def some(**kw):
-        return {k: v for k, v in kw.items() if v not in (None, '', False)}
+        # by identity, not equality: 0 == False in Python, so `--limit 0` was dropped as "not given" and the
+        # server's default answered instead of its refusal. A 0 typed is a 0 sent.
+        return {k: v for k, v in kw.items() if v is not None and v is not False and v != ''}
     if ns.command == 'theses':
         if ns.what == 'featured':
             return 'get_featured_theses', some(topic=ns.topic, limit=ns.limit)

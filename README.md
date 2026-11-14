@@ -26,7 +26,7 @@ person opens the returned link in Hence.
 | `search_theses` | Public theses, by words, basket (perps or spot) and order; paged with a cursor |
 | `get_thesis` | One thesis: the claim, holdings with weights and reasons, other baskets, sources, checkpoints, and a price history |
 | `get_featured_theses` | Today's featured selection |
-| `search_markets` | What trades on Hence and where: perpetuals with live price, funding and open interest, Robinhood Chain spot tokens, and outcome (event) markets on Hyperliquid, one row per side |
+| `search_markets` | What trades on Hence and where: perpetuals with live price, funding and open interest, Robinhood Chain spot tokens, stocks and tokens on Solana (one row per stock), and outcome (event) markets on Hyperliquid, one row per side |
 | `get_asset` | Research on one asset: its live price on each venue, 90 days of daily prices, and for a listed company its profile, analyst ratings and targets, insider trades, earnings, headlines, fundamentals and Hence's own daily analysis. Also answers for a US-listed company Hence does not trade |
 | `get_thesis_guide` | How to write a Hence thesis yourself: the method and the `hence-thesis/1` format |
 
@@ -46,7 +46,7 @@ None publishes on the agent's say-so, places an order, or moves money.
 | `save_thesis_draft` | Puts that thesis in the person's Hence library as a private draft | `theses:write` |
 | `get_thesis_research` | The state of a Hence research run: what it is doing now, or the thesis once there is one. Without a run id, what is in progress and what recently finished | `theses:read` |
 | `start_thesis_research` | Asks Hence to research an idea for the person, steered by their guidance, must-include and exclude lists and venue. Takes 20 to 40 minutes and counts toward their daily limit. Offered only with `HENCE_MCP_RESEARCH=1` | `theses:research` |
-| `propose_trade` | Prepares one order for the person to review and sign in Hence: a perpetual (side, size, leverage, market or limit), or a purchase in dollars of a Robinhood Chain token or of one side of an outcome market. Places nothing. Offered only with `HENCE_MCP_TRADES=1` | `trades:propose` |
+| `propose_trade` | Prepares one order for the person to review and sign in Hence: a perpetual (side, size, leverage, market or limit), or a purchase in dollars of a Robinhood Chain token, of a stock on Solana, or of one side of an outcome market. Places nothing. Offered only with `HENCE_MCP_TRADES=1` | `trades:propose` |
 | `propose_basket` | Prepares buying one thesis's basket: the thesis, the money put in, optionally which basket and a leverage. Buys nothing. Offered only with `HENCE_MCP_TRADES=1` | `trades:propose` |
 | `get_trade_proposals` | Where a prepared trade stands: waiting, opened, placed (and whether the venue's record confirms the fill), dismissed, expired or withdrawn. Offered only with `HENCE_MCP_TRADES=1` | `trades:propose` |
 
@@ -106,8 +106,9 @@ retry never starts a second one.
 plain ticker and returns the sections asked for: `quote`, `history`, `profile`, `analysts`,
 `insiders`, `earnings`, `news`, `fundamentals`, `analysis`. Left out, it returns the first three.
 
-- It is one read of the app (`GET /api/research/asset`). The server passes on what it was
-  given by allowlist, and refuses an answer in which a section is null without the app saying
+- It is one read of the app (`GET /api/research/asset`). The sections are named by allowlist;
+  each section's contents are the app's own, passed on as plain data bounded in depth and size
+  (`shape.plain`), not field by field. The server refuses an answer in which a section is null without the app saying
   why (`unavailable`: it could not be read; `not_applicable`: it does not exist for this kind
   of asset).
 - No argument is a date, a limit or a page: a caller cannot vary what the app asks its data
@@ -141,9 +142,15 @@ What this server can and cannot do:
   needs the venue's own fill record.
 - A proposal **expires** (a day by default, three at most) and stops being openable when the
   person dismisses it or disconnects the agent.
+- **Limits:** 30 new proposals per account per day, and 10 waiting at once. Asking again for a
+  proposal that already exists reaches the same one and does not count.
 - One order, or one thesis's basket. An order is a perpetual, a purchase of a Robinhood Chain
-  token, or a purchase of one side of an outcome market on Hyperliquid. Solana and Elysium
-  tokens and Polymarket are refused for now.
+  token, a purchase of a stock or token on Solana, or a purchase of one side of an outcome
+  market on Hyperliquid. Elysium tokens and Polymarket are refused for now.
+- A **stock on Solana** can have several issuers' tokens. `search_markets` lists one row per
+  stock, named by a token Hence offers, and the Hence ticket buys whichever of the stock's
+  tokens quotes best. The app recognises a purchase of any of them as that proposal's. A mint
+  is case-sensitive and is passed on exactly as read.
 - A **purchase is a buy and only a buy**: `side` is `long`, `size_usd` is the dollars to spend,
   and a leverage or a limit order is refused by name. An outcome side cannot be shorted: its
   other side is its own contract (`other_side` in `search_markets`).
@@ -175,8 +182,10 @@ answer as text.
 
 The same page draws what can be traded (`search_markets`): one asset in full, with its price,
 24 hour change, funding, open interest and volume and a "Trade in Hence" button, or a list of
-assets where each row opens that market in Hence. A spot token shows no price here (this server
-does not pass that data on); the card says to open the link for it.
+assets where each row opens that market in Hence. A spot token on Robinhood Chain shows its price,
+24 hour change, volume and liquidity from Hence's latest snapshot unless `HENCE_MCP_SPOT_FIGURES=0`;
+a token on Solana and a spot token with figures withdrawn show no price, and the card says to open
+the link for it.
 
 The same page draws a trade the agent prepared (`propose_trade`, `get_trade_proposals`): the
 market, side, size, leverage and order type, the agent's reason marked as the agent's, and a
@@ -343,7 +352,7 @@ docker build -t hence-mcp-server . && docker run --rm -p 127.0.0.1:4340:4340 -e 
 | `HENCE_MCP_GATEWAY_SECRET` | unset | The secret this server signs its calls to the Hence app with, at least 32 characters. The app holds the same value |
 | `HENCE_MCP_RESEARCH` | `0` | Strictly `1` offers `start_thesis_research`. Needs sign-in on, and the app's `AGENT_RESEARCH_ACTIVE=1` |
 | `HENCE_MCP_SPOT_FIGURES` | `1` | `0` withdraws spot token prices, volume, liquidity and market cap (identity and link stay) |
-| `HENCE_MCP_TRADES` | `0` | Strictly `1` offers `propose_trade` and `get_trade_proposals`. Needs sign-in on, and the app's `AGENT_TRADES_ACTIVE=1` |
+| `HENCE_MCP_TRADES` | `0` | Strictly `1` offers `propose_trade`, `propose_basket` and `get_trade_proposals`. Needs sign-in on, and the app's `AGENT_TRADES_ACTIVE=1` |
 | `HENCE_MCP_RESOURCE` | `https://mcp.hence.markets/mcp` | This server's own address. A credential is issued for exactly this address |
 | `HENCE_AUTH_ISSUER` | `https://app.hence.markets` | Who signs people in |
 

@@ -104,11 +104,23 @@ def sign(secret, method, path, grant, body, stamp=None, nonce=None):
             'X-Hence-Agent-Signature': hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()}
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect is an answer, never followed: urllib would re-send the request's headers (the person's
+    credential, or this server's signature) to wherever the Location points, another host or plain http included."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def _send(url, method, headers, body, timeout):
-    """-> (status, body bytes, response headers). Raises OSError family on transport failure."""
+    """-> (status, body bytes, response headers). Raises OSError family on transport failure. A redirect
+    comes back as its own 3xx status: it is never followed."""
     req = urllib.request.Request(url, data=body, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _OPENER.open(req, timeout=timeout) as r:
             return r.status, r.read(), dict(r.headers.items())
     except urllib.error.HTTPError as e:
         return e.code, (e.read() if hasattr(e, 'read') else b''), dict(e.headers.items() if e.headers else {})

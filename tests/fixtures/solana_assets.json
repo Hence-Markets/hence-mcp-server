@@ -1,0 +1,90 @@
+{
+ "built": "2026-10-16T20:57:01Z",
+ "count": 4,
+ "assets": [
+  {
+   "underlying": "TSLA",
+   "name": "Tesla, Inc.",
+   "type": "CS",
+   "sector": "Consumer Cyclical",
+   "exchange": "NASDAQ",
+   "variants": [
+    {
+     "issuer": "xStocks",
+     "issuerSymbol": "TSLAx",
+     "mint": "XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB",
+     "liquidityTier": "A",
+     "minUsd": 10,
+     "maxUsd": 25000,
+     "halted": false,
+     "inScope": true
+    },
+    {
+     "issuer": "Ondo",
+     "issuerSymbol": "TSLAon",
+     "mint": "ndo7YJ3mE8vRkL2pQwXzTn4cBh5dGs6fKa9uVtMiN1x",
+     "liquidityTier": "C",
+     "minUsd": 100,
+     "maxUsd": 100000,
+     "halted": false,
+     "inScope": true
+    }
+   ]
+  },
+  {
+   "underlying": "SPY",
+   "name": "SPDR S&P 500 ETF Trust",
+   "type": "ETF",
+   "sector": null,
+   "exchange": "NYSE",
+   "variants": [
+    {
+     "issuer": "xStocks",
+     "issuerSymbol": "SPYx",
+     "mint": "XsoCS1TfEyfFhfvj8EtZ528L3CaKBDBRqRapnBbDF2W",
+     "liquidityTier": "A",
+     "minUsd": 10,
+     "maxUsd": 25000,
+     "halted": true,
+     "inScope": true
+    },
+    {
+     "issuer": "Ondo",
+     "issuerSymbol": "SPYon",
+     "mint": "k18WJUULWheRkSpSquYGdNNmtuE2Vbw1hpuUi92ondo",
+     "liquidityTier": "C",
+     "minUsd": null,
+     "maxUsd": null,
+     "halted": false,
+     "inScope": true
+    }
+   ]
+  },
+  {
+   "underlying": "HALT",
+   "name": "Halted Everywhere Corp.",
+   "type": "CS",
+   "variants": [
+    {
+     "issuer": "xStocks",
+     "mint": "Ha1tedTokenMintAddressForTestsXXXX1111111111",
+     "halted": true,
+     "inScope": true
+    }
+   ]
+  },
+  {
+   "underlying": "OUT",
+   "name": "Out Of Scope Corp.",
+   "type": "CS",
+   "variants": [
+    {
+     "issuer": "Shift",
+     "mint": "Sh1ftTokenMintAddressForTestsXXXXX1111111111",
+     "halted": false,
+     "inScope": false
+    }
+   ]
+  }
+ ]
+}

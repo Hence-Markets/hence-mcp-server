@@ -116,3 +116,7 @@ def data_dir():
 
 MAX_BODY_BYTES = 256 * 1024
 UPSTREAM_TIMEOUT_S = 20
+# The server is bound to every interface and answers the internet (through a tunnel, but nothing here relies on that):
+SOCKET_TIMEOUT_S = 30                  # a connection that stops sending is dropped; without it each one holds a thread for ever
+MAX_CONNECTIONS = 256                  # connections served at once; past this a new one is closed, never queued without bound
+MAX_UPSTREAM_BYTES = 8 * 1024 * 1024   # the largest answer read from the app (its Solana catalog is about 1.2 MB)

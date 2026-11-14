@@ -195,9 +195,15 @@ def my_thesis(value):
 
 def portfolio(value):
     out = []
+    no_wallet = value.get('no_wallet') is True
+    if no_wallet:
+        # a fact the app read, not a failure: never printed as "could not be read"
+        out.append('No wallet is linked to this Hence account, so there are no positions or balances to read.')
     held = value.get('open_positions')
     state = value.get('positions') if isinstance(value.get('positions'), dict) else {}
-    if held is None:
+    if held is None and no_wallet:
+        out.append('Open perpetual positions: none (no wallet linked)')
+    elif held is None:
         out.append('Open perpetual positions: %s (they could not be read)' % NA)
     elif not held:
         out.append('Open perpetual positions: none')
@@ -207,7 +213,7 @@ def portfolio(value):
                  ('%gx' % p['leverage']) if isinstance(p.get('leverage'), (int, float)) else NA, text(p.get('venue')), text(p.get('wallet'))]
                 for p in held if isinstance(p, dict)]
         out.append('Open perpetual positions\n' + table(rows, ['market', 'side', 'size', 'entry', 'value', 'unrealized', 'leverage', 'venue', 'wallet']))
-    if held is not None and state.get('complete') is not True:
+    if held is not None and state.get('complete') is not True and not no_wallet:
         missing = ['%s on %s' % (text(u.get('wallet')), text(u.get('venue'))) for u in state.get('could_not_read') or [] if isinstance(u, dict)]
         out.append('  not complete: ' + ('could not read ' + ', '.join(missing) if missing else 'some wallets were not read'))
     account_ = value.get('account') if isinstance(value.get('account'), dict) else None
@@ -223,7 +229,9 @@ def portfolio(value):
     held_outcomes = value.get('outcome_positions') if isinstance(value.get('outcome_positions'), dict) else None
     if held_outcomes:
         listed = held_outcomes.get('positions')
-        if listed is None:
+        if listed is None and no_wallet:
+            out.append('\nOutcome positions: none (no wallet linked)')
+        elif listed is None:
             out.append('\nOutcome positions: %s (they could not be read)' % NA)
         elif listed:
             rows = [[text(o.get('market')), text(o.get('side')), count(o.get('contracts')), price(o.get('price')), _exact(o.get('value_usd')), text(o.get('wallet'))]
@@ -266,7 +274,7 @@ def portfolio(value):
     if missing:
         out.append('\nNot included (this is not the whole portfolio):\n' + '\n'.join('  - ' + n for n in missing))
     extra = footer(value, {'open_positions', 'positions', 'account', 'outcome_positions', 'spot', 'trading_results', 'last_recorded_value', 'not_included',
-                           'trading_results_days', 'as_of_ms'})
+                           'trading_results_days', 'as_of_ms', 'no_wallet'})
     return '\n'.join(out) + ('\n\n' + extra if extra else '')
 
 
@@ -410,14 +418,21 @@ def asset(value):
                 for v in quote.get('venues') or [] if isinstance(v, dict)]
         if rows:
             out.append(table(rows, ['market', 'price', '24h', 'funding/yr', 'open interest']))
+        for v in quote.get('venues') or []:
+            # one side of an outcome market: the book as read, so a null price shows why it is null
+            if isinstance(v, dict) and ('bid' in v or 'ask' in v):
+                out.append('  best bid %s, best ask %s; other side %s' % (_chance(v.get('bid')), _chance(v.get('ask')), _chance(v.get('other_side_price'))))
+        if isinstance(quote.get('note'), str):
+            out.append('  ' + quote['note'])
         ref = quote.get('reference') if isinstance(quote.get('reference'), dict) else None
         if ref:
             out.append('  reference quote (may be delayed): %s  %s  52-week %s to %s' % (price(ref.get('price')), pct(ref.get('change_pct')),
                                                                                        price(ref.get('year_low')), price(ref.get('year_high'))))
     hist = value.get('history') if isinstance(value.get('history'), dict) else None
     if hist:
-        out.append('  %s to %s: %s  (low %s, high %s; %s)' % (text(hist.get('from')), text(hist.get('to')), pct(hist.get('change_pct')),
-                                                            price(hist.get('low')), price(hist.get('high')), text(hist.get('source'))))
+        out.append('  %s to %s: %s  (low %s, high %s; %s%s)' % (text(hist.get('from')), text(hist.get('to')), pct(hist.get('change_pct')),
+                                                              price(hist.get('low')), price(hist.get('high')), text(hist.get('source')),
+                                                              ('; from ' + hist['market_id']) if isinstance(hist.get('market_id'), str) else ''))
     an = value.get('analysts') if isinstance(value.get('analysts'), dict) else None
     if an:
         target, ratings = an.get('price_target') or {}, an.get('ratings') or {}

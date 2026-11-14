@@ -77,7 +77,7 @@ class Tool(unittest.TestCase):
         got = tools.get_asset({'id': 'perp:BTC', 'sections': ['quote', 'insiders', 'analysis']}, StubUpstream({ROUTE: ok}))
         self.assertEqual((got['insiders'], got['analysis'], got['unavailable'], got['not_applicable']), (None, None, ['analysis'], ['insiders']))
         # null, and neither list says why: the answer cannot be trusted
-        for broken in (answer(sections_asked=['quote', 'insiders'], insiders=None), answer(profile='n/a'), answer(asset={'symbol': ''}), answer(asset=None),
+        for broken in (answer(history=None), answer(profile='n/a'), answer(asset={'symbol': ''}), answer(asset=None),
                        {k: v for k, v in answer().items() if k != 'unavailable'}, answer(unavailable='none'), 'text', None):
             with self.assertRaises(tools.ToolError, msg=repr(broken)[:80]) as caught:
                 tools.get_asset({'id': 'NVDA'}, StubUpstream({ROUTE: broken}))

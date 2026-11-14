@@ -286,7 +286,8 @@ class SearchMarkets(unittest.TestCase):
 
     def test_every_wanted_source_down_is_an_error_not_no_matches(self):
         routes = {'/api/screener/hl': Unavailable('Hence answered 503', 503), '/api/screener/spot': Unavailable('Hence could not be reached'),
-                  '/api/hip4/events': Unavailable('Hence answered 503', 503)}
+                  '/api/hip4/events': Unavailable('Hence answered 503', 503), '/api/solana/assets': Unavailable('Hence answered 503', 503),
+                  '/api/config': {'solanaSpot': True, 'solanaResearch': True}}
         with self.assertRaises(tools.ToolError) as ctx:
             tools.search_markets({'query': 'nvda'}, StubUpstream(routes))
         self.assertIn('No markets were read', str(ctx.exception))
