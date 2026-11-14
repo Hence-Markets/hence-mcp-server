@@ -313,6 +313,17 @@ def _outcome_events(up, settled_too=False):
     return events
 
 
+def _solana_offered(up):
+    """Does this Hence serve its Solana catalog at all? From the app's public config. False
+    only when the app SAYS it does not: a config that could not be read is not "off", so a
+    Solana read that failed is still reported as a failed read."""
+    try:
+        cfg = up.get_json('/api/config', ttl=300)
+    except (Unavailable, NotFound, Expired):
+        return True
+    return not (isinstance(cfg, dict) and cfg.get('solanaSpot') is False and cfg.get('solanaResearch') is False)
+
+
 def search_markets(args, up):
     _unknown_keys(args, SEARCH_MARKETS)
     query = _string(args, 'query', 64)
@@ -321,7 +332,9 @@ def search_markets(args, up):
     base = config.public_base()
     names = _display_names()
     found, failed, as_of = [], {}, None
+    asked = []                       # the lists this search actually read, so "every one failed" is judged against those
     if kind in ('all', 'perp'):
+        asked.append('perp')
         try:
             data = up.get_json('/api/screener/hl', ttl=30)
             rows = data.get('rows') if isinstance(data, dict) else None
@@ -339,6 +352,7 @@ def search_markets(args, up):
     if kind in ('all', 'spot') and (query or kind == 'spot'):
         # spot tokens are only listed for a search: without a query the perps' volume order
         # would bury them, and they carry no figure here to order by
+        asked.append('spot')
         try:
             data = up.get_json('/api/screener/spot', ttl=120)
             rows = data.get('rows') if isinstance(data, dict) else None
@@ -352,9 +366,28 @@ def search_markets(args, up):
                         found.append((score, m.get('volume_24h_usd') or 0, m))
         except (Unavailable, NotFound, Expired) as e:
             failed['spot'] = str(e) if isinstance(e, Unavailable) else 'not available'
+        # stocks and tokens on Solana, from the app's own catalog: one row per stock. Where this Hence
+        # does not serve Solana at all, that is not a failed read and nothing is said about it.
+        try:
+            data = up.get_json('/api/solana/assets', ttl=300)
+            assets = data.get('assets') if isinstance(data, dict) else None
+            if not isinstance(assets, list):
+                raise Unavailable('Hence gave an answer that could not be read')
+            asked.append('solana')
+            for asset in assets:
+                m = shape.solana_market(asset, base)
+                if m:
+                    score = shape.match_score(query, m['symbol'], m['name'])
+                    if score:
+                        found.append((score, 0, m))
+        except (Unavailable, NotFound, Expired) as e:
+            if _solana_offered(up):
+                asked.append('solana')
+                failed['solana'] = str(e) if isinstance(e, Unavailable) else 'not available'
     if kind in ('all', 'outcome') and (query or kind == 'outcome'):
         # like spot, outcome markets are listed for a search or when asked for by kind: they have
         # no volume here to rank against the perps
+        asked.append('outcome')
         try:
             for event in _outcome_events(up):
                 for m in shape.outcome_markets(event, base):
@@ -363,9 +396,7 @@ def search_markets(args, up):
                         found.append((score, 0, m))
         except (Unavailable, NotFound, Expired) as e:
             failed['outcome'] = str(e) if isinstance(e, Unavailable) else 'not available'
-    # the lists this search actually asked: a kind left out of an unqualified search is not "failed"
-    wanted = [k for k in ('perp', 'spot', 'outcome') if kind == k or (kind == 'all' and (k == 'perp' or query))]
-    if failed and all(k in failed for k in wanted):
+    if failed and all(k in failed for k in asked):
         raise ToolError('Hence markets could not be read (%s). No markets were read; try again shortly.'
                         % '; '.join('%s: %s' % kv for kv in sorted(failed.items())))
     found.sort(key=lambda t: (-t[0], -t[1], t[2]['market_id']))
@@ -373,12 +404,13 @@ def search_markets(args, up):
         'markets': [m for _, _, m in found[:limit]],
         'matches': len(found),
         'prices_as_of_unix': as_of,
-        'coverage': 'Perps on Hyperliquid and its builder venues, spot tokens on Robinhood Chain, and outcome (event) markets on Hyperliquid. '
+        'coverage': 'Perps on Hyperliquid and its builder venues, spot tokens on Robinhood Chain, stocks and tokens on Solana where this Hence '
+                    'serves them (one row per stock), and outcome (event) markets on Hyperliquid. '
                     'An outcome market is listed one row per side: each side is its own contract, bought and never shorted. '
-                    'Solana and Elysium tokens and Polymarket are in the Hence app but not in this search yet.',
+                    'Elysium tokens and Polymarket are in the Hence app but not in this search yet.',
         'how_to_trade': 'Open a market\'s url in Hence to trade it. This server cannot place trades.'
                         + (' It can prepare ONE order for the person to review and sign in Hence (propose_trade): a perpetual, a purchase of a '
-                           'Robinhood Chain token, or a purchase of one side of an outcome market.' if config.trades_active() else ''),
+                           'Robinhood Chain token or of a stock on Solana, or a purchase of one side of an outcome market.' if config.trades_active() else ''),
     }
     if failed:
         # one of the two lists did not answer: say so, or a missing market reads as "not listed"
@@ -768,8 +800,9 @@ PROPOSE_TRADE = {
     'properties': {
         'market_id': {'type': 'string', 'maxLength': 80,
                       'description': 'Exactly as search_markets returned it. A perpetual (perp:BTC, perp:xyz:NVDA); a Robinhood Chain token to buy '
-                                     '(spot:4663:0x…); or one side of an outcome market to buy (hip4:1212:0). Solana and Elysium tokens and '
-                                     'Polymarket cannot be proposed yet.'},
+                                     '(spot:4663:0x…); a stock or token on Solana to buy (spot:solana:<mint>, the mint exactly as written: it is '
+                                     'case-sensitive); or one side of an outcome market to buy (hip4:1212:0). Elysium tokens and Polymarket '
+                                     'cannot be proposed yet.'},
         'side': {'type': 'string', 'enum': ['long', 'short'],
                  'description': 'A perpetual is long or short. A spot token or an outcome contract is only "long" (a purchase): to take the other '
                                 'side of an outcome market, propose its other side (the row\'s other_side).'},

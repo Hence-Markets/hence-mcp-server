@@ -303,6 +303,45 @@ def spot_market(row, public_base, figures=True):
     return out
 
 
+MINT_RE = re.compile(r'^[1-9A-HJ-NP-Za-km-z]{32,44}$')          # a Solana mint: base58 and case-sensitive, kept exactly as read
+SOLANA_NOTE = ('No price is passed on for Solana tokens: open the link for the live one. A stock can have several issuers\' tokens on Solana, '
+               'and the Hence ticket buys whichever quotes best.')
+
+
+def solana_url(public_base, mint):
+    return '%s/#/terminal/s/solana/%s' % (public_base, mint)
+
+
+def solana_market(asset, public_base):
+    """One search row per STOCK (or token) on Solana, from Hence's own catalog. A stock can have
+    several issuers' tokens; the row is named by the first one Hence offers that is not halted,
+    because the Hence ticket for any of them buys whichever quotes best. A stock with no token
+    Hence offers right now is not listed. No price: none is passed on, and null is never 0."""
+    if not isinstance(asset, dict):
+        return None
+    ticker = text(asset.get('underlying'), 24)
+    if not ticker:
+        return None
+    offered = [v for v in asset.get('variants') or [] if isinstance(v, dict) and isinstance(v.get('mint'), str) and MINT_RE.match(v['mint'])
+               and v.get('halted') is not True and v.get('inScope') is not False]
+    if not offered:
+        return None
+    mint = offered[0]['mint']
+    return {
+        'market_id': 'spot:solana:' + mint,
+        'symbol': ticker,
+        'name': text(asset.get('name'), 120),
+        'kind': 'spot',
+        'asset_class': text(asset.get('type'), 40),
+        'venue': 'Solana',
+        'contract': mint,
+        'issuers': sorted({text(v.get('issuer'), 40) for v in offered if text(v.get('issuer'), 40)}),
+        'price': None,
+        'price_note': SOLANA_NOTE,
+        'url': solana_url(public_base, mint),
+    }
+
+
 EVENT_RE = re.compile(r'^[qo]\d{1,9}$')
 OUTCOME_ID_RE = re.compile(r'^hip4:(0|[1-9]\d{0,7}):([01])$')
 OUTCOME_PAYS = 'A contract pays 1 US dollar if this side is the result and nothing if it is not.'

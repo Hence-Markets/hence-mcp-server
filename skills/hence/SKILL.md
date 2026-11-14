@@ -108,8 +108,8 @@ Start broad, then go deep: search first, then `get_thesis` on the one or two tha
    in a loop: check back about every ten minutes. When they want it now or want it their way, write the thesis
    yourself instead.
 10. **Nothing here places a trade or moves money.** You can prepare ONE order with
-    `propose_trade` (a perpetual, a purchase of a Robinhood Chain token, or a purchase of one
-    side of an outcome market), or buying a thesis's basket with `propose_basket`: Hence stores
+    `propose_trade` (a perpetual, a purchase of a Robinhood Chain token or of a stock on
+    Solana, or a purchase of one side of an outcome market), or buying a thesis's basket with `propose_basket`: Hence stores
     it, the person opens the link, their own ticket is filled in, and they review and sign it
     with their own wallet. They can change any number first. Prepare one only when the person
     asked for that trade or agreed to it. A basket's holdings are the thesis's own: to change
@@ -117,6 +117,10 @@ Start broad, then go deep: search first, then `get_thesis` on the one or two tha
     - **A spot token or an outcome contract is bought, never shorted.** Use `side: "long"`
       with the dollars to spend, and no leverage and no limit: the server refuses those by
       name. To bet against an outcome, propose its other side (the row's `other_side`).
+    - **A stock on Solana is bought as whichever of its tokens quotes best.** Several issuers
+      have a token for the same stock. Name the stock, pass the `market_id` exactly as
+      `search_markets` gave it (a Solana mint is case-sensitive), and tell the person the
+      ticket shows which token and the live price before they sign.
     - **An outcome contract pays 1 dollar if its side is the result and nothing if not.** Say
       that, and when the market closes, before you prepare one. Its price is a probability
       from 0 to 1; a null price means the market had no usable quote, so do not state one.
@@ -147,9 +151,10 @@ token, and never paste one into a command.
 
 `search_markets` covers perpetuals on Hyperliquid and its builder venues (with live price,
 funding and open interest), spot tokens on Robinhood Chain (with price, change, volume and
-liquidity from Hence's latest snapshot, when the server passes them on), and outcome (event)
-markets on Hyperliquid (`kind: "outcome"`, or a search by words from the question). An outcome
-market is one row per side: each side is its own contract with its own `market_id`. Without a
-query only perpetuals are listed. Solana and Elysium tokens and Polymarket exist in the Hence
-app but are not in this search yet. If a search comes back empty, say it was not found in
+liquidity from Hence's latest snapshot, when the server passes them on), stocks and tokens on
+Solana where this Hence serves them (one row per stock, no price through this server), and
+outcome (event) markets on Hyperliquid (`kind: "outcome"`, or a search by words from the
+question). An outcome market is one row per side: each side is its own contract with its own
+`market_id`. Without a query only perpetuals are listed. Elysium tokens and Polymarket exist
+in the Hence app but are not in this search yet. If a search comes back empty, say it was not found in
 this search, not that Hence does not list it.

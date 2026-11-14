@@ -136,7 +136,7 @@ def _parser():
     tbasket.add_argument('--yes', action='store_true', help='do not ask before sending it to your Hence account')
     propose = xsub.add_parser('propose', help='prepare one order (a perpetual, a spot token or one side of an outcome market); you review and sign it in Hence',
                               parents=[common])
-    propose.add_argument('market', help='a market id from `hence markets`: perp:BTC, perp:xyz:NVDA, spot:4663:0x..., hip4:1212:0')
+    propose.add_argument('market', help='a market id from `hence markets`: perp:BTC, perp:xyz:NVDA, spot:4663:0x..., spot:solana:<mint>, hip4:1212:0')
     propose.add_argument('side', choices=['long', 'short', 'buy'], help='long or short for a perpetual; buy for a spot token or an outcome contract')
     propose.add_argument('size', type=float, help="a perpetual: the position's value in US dollars (not the margin). A purchase: the dollars to spend")
     propose.add_argument('--leverage', type=int, help="perpetuals only; leave out to keep your own setting for the market")

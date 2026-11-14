@@ -270,7 +270,7 @@
     (basket ? [['Amount put in', usd(p.amount_usd)], ['Leverage', isNum(p.leverage) && p.leverage > 1 ? p.leverage + '×' : 'None'],
                ['Basket', p.basket === 'perps' ? 'Perpetuals' : p.basket === 'spot' ? 'Spot tokens' : 'Its own']]
             : purchase(p) ? [['Amount to spend', usd(p.size_usd)],
-               [p.venue === 'spot' ? 'Where' : 'Pays', p.venue === 'spot' ? 'Robinhood Chain' : '$1 a contract if right'],
+               [p.venue === 'spot' ? 'Where' : 'Pays', p.venue === 'spot' ? (String(p.market_id || '').indexOf('spot:solana:') === 0 ? 'Solana' : 'Robinhood Chain') : '$1 a contract if right'],
                [p.venue === 'outcome' ? 'Market closes' : 'Order', p.venue === 'outcome' ? (p.market_closes_at ? String(p.market_closes_at).slice(0, 10) : 'not known') : 'Buy']]
             : [['Position size', usd(p.size_usd)], ['Leverage', isNum(p.leverage) ? p.leverage + '×' : 'Your setting'],
                ['Order', p.order_type === 'limit' ? 'Limit ' + px(p.limit_price) : 'Market']]).forEach(function (f) {
