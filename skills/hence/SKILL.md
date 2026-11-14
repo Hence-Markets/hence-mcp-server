@@ -73,6 +73,7 @@ Exit codes: `0` done; `1` Hence could not do it (the reason is on stderr and std
 | "Have Hence research this" | `start_thesis_research`, then `get_thesis_research` about ten minutes later (needs sign-in; ask first, it uses one of their daily runs) |
 | "Buy this thesis with 500" / "put 1,000 into that basket" | `propose_basket` with the thesis id and the amount, and give them the link (needs sign-in) |
 | "Go long X" / "short Y with 500" / "set that trade up for me" | `search_markets` for the market, then `propose_trade`, and give them the link. Later, `get_trade_proposals` for what they did (needs sign-in) |
+| "Buy 50 dollars of the X token" / "bet 25 on Yes for Z" / "what are the odds of Z?" | `search_markets` (`kind` "spot" or "outcome") for the exact market, `get_asset` for an outcome side's price line, then `propose_trade` with `side` "long" and the dollars to spend |
 
 Start broad, then go deep: search first, then `get_thesis` on the one or two that fit.
 
@@ -106,12 +107,21 @@ Start broad, then go deep: search first, then `get_thesis` on the one or two tha
    tasks it is told when the research finishes and tells you. Where it does not, do not wait
    in a loop: check back about every ten minutes. When they want it now or want it their way, write the thesis
    yourself instead.
-10. **Nothing here places a trade or moves money.** You can prepare one perpetual order with
-    `propose_trade`, or buying a thesis's basket with `propose_basket`: Hence stores it, the
-    person opens the link, their own ticket is filled in, and they review and sign it with
-    their own wallet. They can change any number first. Prepare one only when the person
+10. **Nothing here places a trade or moves money.** You can prepare ONE order with
+    `propose_trade` (a perpetual, a purchase of a Robinhood Chain token, or a purchase of one
+    side of an outcome market), or buying a thesis's basket with `propose_basket`: Hence stores
+    it, the person opens the link, their own ticket is filled in, and they review and sign it
+    with their own wallet. They can change any number first. Prepare one only when the person
     asked for that trade or agreed to it. A basket's holdings are the thesis's own: to change
     them, write a new thesis.
+    - **A spot token or an outcome contract is bought, never shorted.** Use `side: "long"`
+      with the dollars to spend, and no leverage and no limit: the server refuses those by
+      name. To bet against an outcome, propose its other side (the row's `other_side`).
+    - **An outcome contract pays 1 dollar if its side is the result and nothing if not.** Say
+      that, and when the market closes, before you prepare one. Its price is a probability
+      from 0 to 1; a null price means the market had no usable quote, so do not state one.
+    - **"pending" is not bought.** A purchase the person sent but that is not confirmed yet
+      comes back as state `pending` and can still fail. Say it was sent, not that they own it.
 11. **Research is what Hence read, not what you remember.** `get_asset` returns a section only
     when it was read. A section named in `unavailable` was not read: say so and do not fill it
     from memory. One named in `not_applicable` does not exist for that asset. A reference quote
@@ -136,7 +146,10 @@ token, and never paste one into a command.
 ## Coverage, so you do not overclaim
 
 `search_markets` covers perpetuals on Hyperliquid and its builder venues (with live price,
-funding and open interest) and spot tokens on Robinhood Chain (identity and link; no price
-through this server). Solana and Elysium tokens and prediction markets exist in the Hence app
-but are not in this search yet. If a search comes back empty, say it was not found in this
-search, not that Hence does not list it.
+funding and open interest), spot tokens on Robinhood Chain (with price, change, volume and
+liquidity from Hence's latest snapshot, when the server passes them on), and outcome (event)
+markets on Hyperliquid (`kind: "outcome"`, or a search by words from the question). An outcome
+market is one row per side: each side is its own contract with its own `market_id`. Without a
+query only perpetuals are listed. Solana and Elysium tokens and Polymarket exist in the Hence
+app but are not in this search yet. If a search comes back empty, say it was not found in
+this search, not that Hence does not list it.

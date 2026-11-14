@@ -275,8 +275,10 @@ SEARCH_MARKETS = {
     'additionalProperties': False,
     'properties': {
         'query': {'type': 'string', 'maxLength': 64,
-                  'description': 'A ticker or name, e.g. "NVDA", "bitcoin", "OpenAI". Leave out for the most traded perps.'},
-        'kind': {'type': 'string', 'enum': ['all', 'perp', 'spot'], 'default': 'all'},
+                  'description': 'A ticker or name, e.g. "NVDA", "bitcoin", "OpenAI", or words from an outcome market\'s question, '
+                                 'e.g. "fed", "election". Leave out for the most traded perps.'},
+        'kind': {'type': 'string', 'enum': ['all', 'perp', 'spot', 'outcome'], 'default': 'all',
+                 'description': '"outcome" lists outcome (event) markets on Hyperliquid: one row per side, each its own contract.'},
         'limit': {'type': 'integer', 'minimum': 1, 'maximum': 25, 'default': 10},
     },
 }
@@ -301,10 +303,20 @@ def _display_names():
     return _NAMES
 
 
+def _outcome_events(up, settled_too=False):
+    """Hence's own list of outcome markets (the Predictions page's): the events, or Unavailable.
+    Without `settled_too` it holds only what can still be traded."""
+    data = up.get_json('/api/hip4/events', {'all': '1'} if settled_too else None, ttl=15)
+    events = data.get('events') if isinstance(data, dict) and data.get('ok') is True else None
+    if not isinstance(events, list):
+        raise Unavailable('Hence gave an answer that could not be read')
+    return events
+
+
 def search_markets(args, up):
     _unknown_keys(args, SEARCH_MARKETS)
     query = _string(args, 'query', 64)
-    kind = _choice(args, 'kind', ('all', 'perp', 'spot'), 'all')
+    kind = _choice(args, 'kind', ('all', 'perp', 'spot', 'outcome'), 'all')
     limit = _integer(args, 'limit', 1, 25, 10)
     base = config.public_base()
     names = _display_names()
@@ -340,7 +352,19 @@ def search_markets(args, up):
                         found.append((score, m.get('volume_24h_usd') or 0, m))
         except (Unavailable, NotFound, Expired) as e:
             failed['spot'] = str(e) if isinstance(e, Unavailable) else 'not available'
-    wanted = [k for k in ('perp', 'spot') if kind in ('all', k)]
+    if kind in ('all', 'outcome') and (query or kind == 'outcome'):
+        # like spot, outcome markets are listed for a search or when asked for by kind: they have
+        # no volume here to rank against the perps
+        try:
+            for event in _outcome_events(up):
+                for m in shape.outcome_markets(event, base):
+                    score = shape.match_score(query, m['symbol'], m['name'])
+                    if score:
+                        found.append((score, 0, m))
+        except (Unavailable, NotFound, Expired) as e:
+            failed['outcome'] = str(e) if isinstance(e, Unavailable) else 'not available'
+    # the lists this search actually asked: a kind left out of an unqualified search is not "failed"
+    wanted = [k for k in ('perp', 'spot', 'outcome') if kind == k or (kind == 'all' and (k == 'perp' or query))]
     if failed and all(k in failed for k in wanted):
         raise ToolError('Hence markets could not be read (%s). No markets were read; try again shortly.'
                         % '; '.join('%s: %s' % kv for kv in sorted(failed.items())))
@@ -349,14 +373,18 @@ def search_markets(args, up):
         'markets': [m for _, _, m in found[:limit]],
         'matches': len(found),
         'prices_as_of_unix': as_of,
-        'coverage': 'Perps on Hyperliquid and its builder venues, and spot tokens on Robinhood Chain. '
-                    'Solana and Elysium tokens and prediction markets are in the Hence app but not in this search yet.',
+        'coverage': 'Perps on Hyperliquid and its builder venues, spot tokens on Robinhood Chain, and outcome (event) markets on Hyperliquid. '
+                    'An outcome market is listed one row per side: each side is its own contract, bought and never shorted. '
+                    'Solana and Elysium tokens and Polymarket are in the Hence app but not in this search yet.',
         'how_to_trade': 'Open a market\'s url in Hence to trade it. This server cannot place trades.'
-                        + (' It can prepare one perpetual order for the person to review and sign in Hence: propose_trade.' if config.trades_active() else ''),
+                        + (' It can prepare ONE order for the person to review and sign in Hence (propose_trade): a perpetual, a purchase of a '
+                           'Robinhood Chain token, or a purchase of one side of an outcome market.' if config.trades_active() else ''),
     }
     if failed:
         # one of the two lists did not answer: say so, or a missing market reads as "not listed"
         out['incomplete'] = 'Not all markets were searched: %s could not be read.' % ' and '.join(sorted(failed))
+    if kind == 'all' and not query:
+        out['not_listed_here'] = 'Without a query only perps are listed. Search by name, or ask for kind "spot" or "outcome".'
     return out
 
 
@@ -366,8 +394,9 @@ GET_ASSET = {
     'required': ['id'],
     'properties': {
         'id': {'type': 'string', 'maxLength': 80,
-               'description': 'A perpetual\'s market_id from search_markets ("perp:xyz:NVDA", "perp:BTC"), or a plain ticker ("NVDA"). A US-listed company '
-                              'that Hence does not trade can be looked up by its ticker; write "ALT.US" for a company whose ticker is also a crypto.'},
+               'description': 'A perpetual\'s market_id from search_markets ("perp:xyz:NVDA", "perp:BTC"), one side of an outcome market '
+                              '("hip4:1212:0"), or a plain ticker ("NVDA"). A US-listed company that Hence does not trade can be looked up by its '
+                              'ticker; write "ALT.US" for a company whose ticker is also a crypto.'},
         'sections': {'type': 'array', 'maxItems': 9, 'items': {'type': 'string', 'enum': list(shape.ASSET_SECTIONS)},
                      'description': 'What to read. Left out: quote, history and profile. analysts, insiders, earnings, news and fundamentals are for '
                                     'companies; analysis is Hence\'s own daily report, when one exists.'},
@@ -379,11 +408,14 @@ _ASSET_ID = re.compile(r'^(perp:(?:[a-z0-9]{1,12}:)?[A-Za-z0-9._/-]{1,40}|[A-Za-
 def get_asset(args, up):
     _unknown_keys(args, GET_ASSET)
     asset_id = _string(args, 'id', 80)
-    if not _ASSET_ID.match(asset_id):
-        raise ToolError('`id` is a perpetual\'s market_id from search_markets (perp:xyz:NVDA) or a plain ticker (NVDA).')
+    outcome = bool(shape.OUTCOME_ID_RE.match(asset_id))
+    if not outcome and not _ASSET_ID.match(asset_id):
+        raise ToolError('`id` is a market_id from search_markets (perp:xyz:NVDA, hip4:1212:0) or a plain ticker (NVDA).')
     sections = args.get('sections')
     if sections is not None and (not isinstance(sections, list) or any(s not in shape.ASSET_SECTIONS for s in sections)):
         raise ToolError('`sections` is a list of: %s.' % ', '.join(shape.ASSET_SECTIONS))
+    if outcome:
+        return _outcome_asset(asset_id, sections, up)
     # asked in the answer's own order, so the same request is always the same address (and the same cached answer)
     query = {'id': asset_id, 'sections': ','.join(s for s in shape.ASSET_SECTIONS if s in set(sections or []))}
     try:
@@ -398,6 +430,33 @@ def get_asset(args, up):
     return out
 
 
+def _outcome_asset(market_id, sections, up):
+    """One side of an outcome market, from the app's own public reads for the Predictions page:
+    its event (settled ones too, so a market that has closed reads as closed) and the side's
+    daily closes. The price line is optional: when that read fails the answer says history is
+    unavailable and still carries the market."""
+    asked = set(sections) if sections else set(DEFAULT_ASSET_SECTIONS)
+    try:
+        events = _outcome_events(up, settled_too=True)
+    except (NotFound, Expired):
+        raise ToolError('Hence has no outcome market "%s". Find one with search_markets, kind "outcome".' % market_id)
+    except Unavailable as e:
+        raise ToolError('%s. The market was not read; try again shortly.' % e)
+    history = False
+    if 'history' in asked:
+        m = shape.OUTCOME_ID_RE.match(market_id)
+        try:
+            data = up.get_json('/api/hip4/history', {'coin': '#%d' % (int(m.group(1)) * 10 + int(m.group(2))), 'tf': '1d', 'hours': '720'}, ttl=300)
+            history = data.get('points') if isinstance(data, dict) and data.get('ok') is True else None
+        except (Unavailable, NotFound, Expired):
+            history = None                                   # unread: the answer lists it as unavailable, never as an empty line
+    out = shape.outcome_asset(market_id, events, history, asked, config.public_base())
+    if out is None:
+        raise ToolError('Hence has no outcome market "%s". Find one with search_markets, kind "outcome".' % market_id)
+    return out
+
+
+DEFAULT_ASSET_SECTIONS = ('quote', 'history', 'profile')       # what the app reads when `sections` is left out
 ACCOUNT = {'type': 'object', 'additionalProperties': False, 'properties': {}}
 
 
@@ -708,14 +767,19 @@ PROPOSE_TRADE = {
     'required': ['market_id', 'side', 'size_usd'],
     'properties': {
         'market_id': {'type': 'string', 'maxLength': 80,
-                      'description': 'A perpetual, exactly as search_markets returned it (perp:BTC, perp:xyz:NVDA). Spot tokens and outcome markets cannot be proposed yet.'},
-        'side': {'type': 'string', 'enum': ['long', 'short']},
+                      'description': 'Exactly as search_markets returned it. A perpetual (perp:BTC, perp:xyz:NVDA); a Robinhood Chain token to buy '
+                                     '(spot:4663:0x…); or one side of an outcome market to buy (hip4:1212:0). Solana and Elysium tokens and '
+                                     'Polymarket cannot be proposed yet.'},
+        'side': {'type': 'string', 'enum': ['long', 'short'],
+                 'description': 'A perpetual is long or short. A spot token or an outcome contract is only "long" (a purchase): to take the other '
+                                'side of an outcome market, propose its other side (the row\'s other_side).'},
         'size_usd': {'type': 'number', 'minimum': 10, 'maximum': 100000,
-                     'description': 'The position\'s value in US dollars. This is the size of the position, not the margin: at 3x leverage a 300 position needs about 100 of margin.'},
+                     'description': 'For a perpetual, the position\'s value in US dollars: the size of the position, not the margin (at 3x leverage a '
+                                    '300 position needs about 100 of margin). For a spot token or an outcome contract, the US dollars to spend.'},
         'leverage': {'type': 'integer', 'minimum': 1, 'maximum': 50,
-                     'description': 'Leave out to keep the person\'s own setting for the market. The ticket lowers it to the market\'s maximum.'},
-        'order_type': {'type': 'string', 'enum': ['market', 'limit'], 'description': 'Leave out for a market order.'},
-        'limit_price': {'type': 'number', 'exclusiveMinimum': 0, 'description': 'Required for a limit order; leave out for a market order.'},
+                     'description': 'Perpetuals only. Leave out to keep the person\'s own setting for the market. The ticket lowers it to the market\'s maximum.'},
+        'order_type': {'type': 'string', 'enum': ['market', 'limit'], 'description': 'Perpetuals only. Leave out for a market order.'},
+        'limit_price': {'type': 'number', 'exclusiveMinimum': 0, 'description': 'Perpetuals only. Required for a limit order; leave out for a market order.'},
         'note': {'type': 'string', 'maxLength': 280, 'description': 'Why, in one or two sentences. The person sees it in Hence, marked as your words.'},
         'valid_for_hours': {'type': 'integer', 'minimum': 1, 'maximum': 72, 'description': 'How long the person has to act on it. Leave out for 24.'},
     },

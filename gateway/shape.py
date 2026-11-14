@@ -8,6 +8,7 @@ Rules these functions keep (each has a test):
   * Thesis text is written by Hence users and the research pipeline. It is passed through as
     content and labelled as such; it is never merged into instructions.
 """
+import datetime
 import json
 import math
 import re
@@ -302,6 +303,150 @@ def spot_market(row, public_base, figures=True):
     return out
 
 
+EVENT_RE = re.compile(r'^[qo]\d{1,9}$')
+OUTCOME_ID_RE = re.compile(r'^hip4:(0|[1-9]\d{0,7}):([01])$')
+OUTCOME_PAYS = 'A contract pays 1 US dollar if this side is the result and nothing if it is not.'
+OUTCOME_PRICE_NOTE = ('The price is the middle of the market\'s bid and ask for one contract, from 0 to 1: read it as the market\'s probability for '
+                      'this side. Null means the market had no usable quote.')
+
+
+def outcome_url(public_base, event_id):
+    return '%s/#/terminal/o/%s' % (public_base, event_id)
+
+
+def _probability(v, placeholder=False):
+    """A side's price as a probability strictly between 0 and 1, or None. The venue reports
+    exactly 0.5 for a book nobody has quoted, and a question's "Other" row is usually that
+    book: there (`placeholder`) 0.5 is not a price."""
+    p = num(v)
+    if p is None or not 0 < p < 1 or (placeholder and p == 0.5):
+        return None
+    return p
+
+
+def outcome_rows(event):
+    """An event's markets as (outcome, label, [side names], [prices]) for the rows that are
+    well formed; a row that is not is skipped, never guessed at."""
+    out = []
+    for row in event.get('outcomes') or []:
+        if not isinstance(row, dict) or not isinstance(row.get('outcome'), int) or isinstance(row.get('outcome'), bool) or row['outcome'] < 0:
+            continue
+        sides = row.get('sides')
+        if not isinstance(sides, list) or len(sides) != 2 or not all(text(x) for x in sides):
+            continue
+        label = text(row.get('label'), 120)
+        other = label == 'Other'
+        out.append((row['outcome'], label, [text(sides[0], 60), text(sides[1], 60)],
+                    [_probability(row.get('yes'), other), _probability(row.get('no'), other)]))
+    return out
+
+
+def outcome_name(title, label, side):
+    """"the question · this answer · Yes"; a two-sided market's row is its own title."""
+    return ' · '.join([title] + ([label] if label and label != title else []) + [side])[:200]
+
+
+def outcome_markets(event, public_base):
+    """One search row per SIDE of each of an event's markets. A side is its own contract and
+    its own market_id (hip4:<outcome>:<side>): there is no shorting, so betting against a side
+    is buying the other one, which each row names. A settled or closed event lists nothing."""
+    if not isinstance(event, dict) or event.get('settled') is not False or not EVENT_RE.match(str(event.get('id') or '')):
+        return []
+    title = text(event.get('title'), 160)
+    if not title:
+        return []
+    out = []
+    for outcome, label, sides, prices in outcome_rows(event):
+        for i in (0, 1):
+            out.append({
+                'market_id': 'hip4:%d:%d' % (outcome, i),
+                'symbol': text(event.get('underlying'), 24),
+                'name': outcome_name(title, label, sides[i]),
+                'kind': 'outcome',
+                'asset_class': 'prediction',
+                'venue': 'Hyperliquid outcome market',
+                'question': title,
+                'answer': label if label and label != title else None,
+                'side': sides[i],
+                'price': prices[i],
+                'price_note': OUTCOME_PRICE_NOTE,
+                'pays': OUTCOME_PAYS,
+                'closes_at': text(event.get('expiry'), 40),
+                'other_side': 'hip4:%d:%d' % (outcome, 1 - i),
+                'url': outcome_url(public_base, event['id']),
+            })
+    return out
+
+
+def outcome_asset(market_id, events, history, asked, public_base):
+    """One side of an outcome market, in the shape get_asset answers every asset in.
+    `events` is Hence's event list INCLUDING settled ones (so a market that has closed reads as
+    closed, not as unknown); `history` is the side's daily closes, None when that read failed,
+    False when it was not asked for. None when no listed event has this outcome."""
+    m = OUTCOME_ID_RE.match(market_id)
+    outcome, side = int(m.group(1)), int(m.group(2))
+    for ev in events:
+        if not isinstance(ev, dict) or not EVENT_RE.match(str(ev.get('id') or '')) or not text(ev.get('title')):
+            continue
+        for number, label, sides, prices in outcome_rows(ev):
+            if number != outcome:
+                continue
+            title, settled = text(ev['title'], 160), ev.get('settled')
+            open_ = settled is False
+            url = outcome_url(public_base, ev['id'])
+            out = {'asset': {'id': market_id, 'symbol': outcome_name(title, label, sides[side]), 'class': 'outcome',
+                             'tradeable_on_hence': open_ if isinstance(settled, bool) else None,
+                             'markets': [{'market_id': market_id, 'venue': 'Hyperliquid outcome market', 'url': url}] if open_ else [],
+                             'reference_ticker': None}}
+            unavailable, not_applicable = [], []
+            for name in ASSET_SECTIONS:
+                if name not in asked:
+                    continue
+                if name == 'quote':
+                    out['quote'] = {'venues': [{'market_id': market_id, 'price': prices[side], 'other_side_price': prices[1 - side]}], 'reference': None,
+                                    'price_note': OUTCOME_PRICE_NOTE} if open_ else None
+                    if not open_:
+                        not_applicable.append('quote')          # a closed market has no price to buy at
+                elif name == 'history':
+                    out['history'] = _outcome_history(history)
+                    if out['history'] is None:
+                        unavailable.append('history')
+                elif name == 'profile':
+                    out['profile'] = {'question': title, 'answer': label if label and label != title else None, 'side': sides[side],
+                                      'other_side': {'market_id': 'hip4:%d:%d' % (outcome, 1 - side), 'side': sides[1 - side]},
+                                      'pays': OUTCOME_PAYS, 'closes_at': text(ev.get('expiry'), 40),
+                                      'status': 'open' if open_ else 'closed or settled' if settled is True else 'unknown'}
+                else:
+                    out[name] = None
+                    not_applicable.append(name)                 # company research does not exist for an outcome market
+            out['unavailable'], out['not_applicable'] = sorted(unavailable), sorted(not_applicable)
+            out['how_to_read'] = ASSET_HOW_TO_READ
+            if not open_:
+                out['note'] = ('This market has closed or settled: it can no longer be bought.' if settled is True
+                               else 'Hence could not tell whether this market is still open.')
+            out['disclaimer'] = 'Nothing here is investment advice.'
+            return out
+    return None
+
+
+def _outcome_history(points):
+    """The side's daily closes as the card's price line draws them, or None when the read
+    failed or held nothing usable: an empty line is never drawn as a flat one."""
+    if not isinstance(points, list):
+        return None
+    rows = []
+    for pt in points:
+        t, p = (num(pt.get('t')), _probability(pt.get('p'))) if isinstance(pt, dict) else (None, None)
+        if t is None or p is None:
+            continue
+        rows.append({'date': datetime.datetime.fromtimestamp(t, datetime.timezone.utc).date().isoformat(), 'close': p})
+    if len(rows) < 2:
+        return None
+    closes = [r['close'] for r in rows]
+    return {'source': 'venue daily closes for this side (0 to 1)', 'from': rows[0]['date'], 'to': rows[-1]['date'], 'points': rows[-90:],
+            'change_points': num((closes[-1] - closes[0]) * 100, 1), 'high': max(closes), 'low': min(closes)}
+
+
 def match_score(query, symbol, name):
     """How well a market answers a search. 0 = not a match."""
     q = (query or '').strip().lower()
@@ -487,7 +632,9 @@ def research_list(data):
 PROPOSAL_RE = re.compile(r'^pr_[A-Za-z0-9_-]{22}$')
 _PROPOSAL_STATES = ('waiting', 'opened', 'placed', 'dismissed', 'expired', 'withdrawn')
 _PROPOSAL = ('proposal_id', 'status', 'market_id', 'market', 'side', 'size_usd', 'leverage', 'order_type', 'limit_price', 'note',
-             'created_at', 'expires_at', 'url', 'what_now')
+             'created_at', 'expires_at', 'url', 'what_now', 'market_closes_at')
+_ORDER_VENUES = ('perp', 'spot', 'outcome')            # which Hence ticket the order is for
+_PURCHASES = ('spot', 'outcome')                       # a buy: no short, no leverage, no limit order
 _BASKET = ('proposal_id', 'status', 'thesis_id', 'thesis', 'thesis_version', 'basket', 'amount_usd', 'leverage', 'note',
            'created_at', 'expires_at', 'url', 'what_now')
 NOT_PLACED = 'Nothing has been placed. Only the person can place it, in Hence.'
@@ -516,11 +663,20 @@ def trade_proposal(data):
         return None                                  # a kind this server does not know is not passed on as an order
     if data.get('side') not in ('long', 'short') or num(data.get('size_usd')) is None or not text(data.get('market_id')):
         return None
+    # an app from before purchases names no venue: every order it holds is a perpetual
+    venue = 'perp' if data.get('venue') is None else data.get('venue')
+    if venue not in _ORDER_VENUES:
+        return None                                  # a ticket this server does not know is not passed on as an order
+    if venue in _PURCHASES and (data['side'] != 'long' or data.get('leverage') is not None or data.get('order_type') not in (None, 'market')
+                                or data.get('limit_price') is not None):
+        return None                                  # a purchase with a short side, a leverage or a limit is not one
     out = {k: data.get(k) for k in _PROPOSAL if data.get(k) is not None or k in ('leverage', 'limit_price')}
     out['kind'] = 'order'
+    out['venue'] = venue
     out['size_usd'] = num(data['size_usd'])
     if isinstance(order, dict):
-        if order.get('state') not in ('filled', 'resting') or not isinstance(order.get('confirmed_by_venue'), bool):
+        # 'pending' = sent from the ticket with no result yet (a purchase not yet confirmed on the chain): never passed on as filled
+        if order.get('state') not in ('filled', 'resting', 'pending') or not isinstance(order.get('confirmed_by_venue'), bool):
             return None
         out['order'] = {'state': order['state'], 'size_usd': num(order.get('size_usd')), 'confirmed_by_venue': order['confirmed_by_venue'],
                         'placed_at': text(order.get('placed_at'))}
@@ -552,6 +708,10 @@ def trade_propose(data):
                      'and they review the basket and sign it there with their own wallet. They can change the amount first. Tell them each '
                      'warning. Do not say it was bought: Hence does not record whether a basket was bought from a proposal, so read '
                      'get_my_portfolio for their positions.') if proposal.get('kind') == 'basket' else
+                    ('The purchase is PREPARED, not made. Give the person the url: they open it in Hence, the ticket for this market is filled '
+                     'in with the amount, and they review it and sign there with their own wallet. They can change the amount first. Tell them '
+                     'each warning. Do not say it was bought. To learn what they did, call get_trade_proposals with this proposal_id: a purchase '
+                     'that was sent but not yet confirmed is state "pending", and can still fail.') if proposal.get('venue') in _PURCHASES else
                     ('The trade is PREPARED, not placed. Give the person the url: they open it in Hence, the order ticket is filled in with '
                      'these numbers, and they review and sign it there with their own wallet. They can change any number first. Tell them '
                      'each warning. Do not say the trade was made. To learn what they did, call get_trade_proposals with this proposal_id.')}

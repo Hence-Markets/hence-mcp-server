@@ -130,12 +130,28 @@ def markets(value):
     rows = value.get('markets')
     if not isinstance(rows, list):
         return json.dumps(value, indent=2, ensure_ascii=False)
+    listed = [m for m in rows if isinstance(m, dict)]
     cells = [[text(m.get('symbol')), text(m.get('kind')), text(m.get('venue')), price(m.get('price')), pct(m.get('change_24h_pct')),
               pct(m.get('funding_apr_pct')), money(m.get('open_interest_usd')), money(m.get('volume_24h_usd')), text(m.get('url'))]
-             for m in rows if isinstance(m, dict)]
-    body = table(cells, ['symbol', 'kind', 'venue', 'price', '24h', 'funding/yr', 'open interest', 'volume 24h', 'open in Hence']) or 'No markets matched.'
+             for m in listed if m.get('kind') != 'outcome']
+    parts = []
+    if cells:
+        parts.append(table(cells, ['symbol', 'kind', 'venue', 'price', '24h', 'funding/yr', 'open interest', 'volume 24h', 'open in Hence']))
+    # an outcome market is one row per side: its id is what `hence trade propose` takes, and its price is a probability
+    sides = [[text(m.get('market_id')), text(m.get('name')), _chance(m.get('price')), text(m.get('closes_at')), text(m.get('url'))]
+             for m in listed if m.get('kind') == 'outcome']
+    if sides:
+        parts.append(table(sides, ['market id', 'outcome market · side', 'price', 'closes', 'open in Hence']))
+    body = '\n\n'.join(parts) or 'No markets matched.'
     extra = footer(value, {'markets'})
     return body + ('\n\n' + extra if extra else '')
+
+
+def _chance(v):
+    """An outcome side's price, 0 to 1, as cents and a percentage. Not a number = %s: never 0.""" % NA
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 < v < 1:
+        return NA
+    return '%.2f (%d%%)' % (v, round(v * 100))
 
 
 def account(value):
@@ -323,6 +339,11 @@ def _proposal(p):
             text(p.get('thesis')), _exact(p.get('amount_usd')),
             (' at %sx' % p['leverage']) if isinstance(p.get('leverage'), int) and p['leverage'] > 1 else '',
             ('  %s' % p['basket']) if p.get('basket') else '', text(p.get('status')))
+    elif p.get('venue') in ('spot', 'outcome'):
+        # a purchase: no direction, no leverage, no order type
+        head = 'Buy %s  %s  [%s]' % (text(p.get('market') or p.get('market_id')), _exact(p.get('size_usd')), text(p.get('status')))
+        if p.get('market_closes_at'):
+            head += '\n  market closes: %s' % text(p.get('market_closes_at'))
     else:
         head = '%s %s  %s%s  %s  [%s]' % (
             'Short' if p.get('side') == 'short' else 'Long', text(p.get('market') or p.get('market_id')), _exact(p.get('size_usd')),
@@ -333,7 +354,8 @@ def _proposal(p):
         out.append('  note: ' + p['note'])
     order = p.get('order') if isinstance(p.get('order'), dict) else None
     if order:
-        out.append('  order: %s, %s, %s' % (text(order.get('state')), _exact(order.get('size_usd')),
+        # "pending" is sent with no result yet: it is printed as that, never as bought
+        out.append('  order: %s, %s, %s' % ('sent, not confirmed yet' if order.get('state') == 'pending' else text(order.get('state')), _exact(order.get('size_usd')),
                                            'confirmed by the venue' if order.get('confirmed_by_venue') is True else 'not yet confirmed by the venue'))
     else:
         out.append('  Not bought.' if basket else '  Not placed.')
