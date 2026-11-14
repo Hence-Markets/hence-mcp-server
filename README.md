@@ -78,6 +78,23 @@ person types an idea. It reads the idea, screens the whole catalogue and builds 
 `exclude` and `basket`. It returns a run id; `get_thesis_research` says what it is doing and,
 when it finishes, where the thesis is. Hence also notifies the person in the app.
 
+**Being told when it finishes.** The server speaks the protocol's tasks extension
+(`io.modelcontextprotocol/tasks`, revision 2026-07-28). A client that declares the extension on
+its request gets a task handle back from `start_thesis_research` instead of a result, polls
+`tasks/get`, and tells the person when the research is done; the Claude Code command line does
+this today. A client that does not declare it gets the ordinary result and checks back with
+`get_thesis_research`, as before.
+
+- The task **is** the person's research run in Hence. Its id is the run's id and its state is
+  read from the app under the person's connection on every poll, so this server stores
+  nothing and a restart loses nothing.
+- A task is returned only for a run the app said it started: never for a refusal, and never
+  to a client that did not declare the extension on that request.
+- A run that ends without a thesis is a completed task that says what happened. A read that
+  fails is "poll again", never a finished task.
+- `tasks/cancel` is acknowledged, and nothing is sent to Hence: a run is not stopped once it
+  has started. `tasks/update` is refused, because a run never waits for input.
+
 It is the one tool that spends Hence's money, so it has its own switch (`HENCE_MCP_RESEARCH`,
 which must match the app's `AGENT_RESEARCH_ACTIVE`), its own permission, and counts toward the
 person's daily research limit. The same request on the same day reaches the same run, so a
