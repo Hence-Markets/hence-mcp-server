@@ -454,3 +454,68 @@ def research_list(data):
         return None
     return {'in_progress': [r for r in data['in_progress'] if isinstance(r, dict)],
             'recently_finished': [r for r in data['recently_finished'] if isinstance(r, dict)]}
+
+
+# ── a trade prepared for the person ─────────────────────────────────────────────────────────
+PROPOSAL_RE = re.compile(r'^pr_[A-Za-z0-9_-]{22}$')
+_PROPOSAL_STATES = ('waiting', 'opened', 'placed', 'dismissed', 'expired', 'withdrawn')
+_PROPOSAL = ('proposal_id', 'status', 'market_id', 'market', 'side', 'size_usd', 'leverage', 'order_type', 'limit_price', 'note',
+             'created_at', 'expires_at', 'url', 'what_now')
+NOT_PLACED = 'Nothing has been placed. Only the person can place it, in Hence.'
+
+
+def trade_proposal(data):
+    """One proposed trade as the app answered it. None when it is not one. An order is named
+    only when the app named it, and "placed" and the order must agree or neither is trusted:
+    this server never reports a trade the app did not."""
+    if not isinstance(data, dict) or not PROPOSAL_RE.match(str(data.get('proposal_id') or '')) or data.get('status') not in _PROPOSAL_STATES:
+        return None
+    if data.get('side') not in ('long', 'short') or num(data.get('size_usd')) is None or not text(data.get('market_id')) \
+            or not text(data.get('url')) or not text(data.get('what_now')):
+        return None
+    order = data.get('order')
+    if (data['status'] == 'placed') != isinstance(order, dict):
+        return None
+    out = {k: data.get(k) for k in _PROPOSAL if data.get(k) is not None or k in ('leverage', 'limit_price')}
+    out['size_usd'] = num(data['size_usd'])
+    if isinstance(order, dict):
+        if order.get('state') not in ('filled', 'resting') or not isinstance(order.get('confirmed_by_venue'), bool):
+            return None
+        out['order'] = {'state': order['state'], 'size_usd': num(order.get('size_usd')), 'confirmed_by_venue': order['confirmed_by_venue'],
+                        'placed_at': text(order.get('placed_at'))}
+    else:
+        out['placed'] = False
+    return out
+
+
+def trade_propose(data):
+    """The app's answer to a proposed trade. None when it cannot be read: whether a proposal
+    was stored is never guessed."""
+    if not isinstance(data, dict) or not isinstance(data.get('ok'), bool) or not isinstance(data.get('proposed'), bool):
+        return None
+    problems = [{'field': text(p.get('field')) or '', 'problem': text(p.get('problem'), 400)} for p in data.get('problems') or []
+                if isinstance(p, dict) and text(p.get('problem'))]
+    if not data['ok']:
+        if data['proposed'] or not problems:
+            return None
+        return {'ok': False, 'proposed': False, 'problems': problems, 'next': 'Nothing was proposed. Fix every problem and ask again.'}
+    proposal = trade_proposal(data.get('proposal'))
+    if not data['proposed'] or problems or proposal is None or proposal['status'] not in ('waiting', 'opened'):
+        return None
+    fee = data.get('hence_fee') if isinstance(data.get('hence_fee'), dict) else {}
+    return {'ok': True, 'proposed': True, 'already_proposed': data.get('already_proposed') is True, 'problems': [],
+            'warnings': [text(w, 400) for w in data.get('warnings') or [] if text(w)],
+            'proposal': proposal,
+            'hence_fee': {'max_percent': num(fee.get('max_percent')), 'note': text(fee.get('note'), 400)},
+            'next': 'The trade is PREPARED, not placed. Give the person the url: they open it in Hence, the order ticket is filled in with '
+                    'these numbers, and they review and sign it there with their own wallet. They can change any number first. Tell them '
+                    'each warning. Do not say the trade was made. To learn what they did, call get_trade_proposals with this proposal_id.'}
+
+
+def trade_list(data):
+    if not isinstance(data, dict) or not isinstance(data.get('proposals'), list):
+        return None
+    rows = [trade_proposal(r) for r in data['proposals']]
+    if any(r is None for r in rows):
+        return None                                  # one unreadable row: the list is not complete, so it is not shown as one
+    return {'proposals': rows}

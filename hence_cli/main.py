@@ -15,6 +15,9 @@
     hence research start "<idea>"    ask Hence to research an idea (20 to 40 minutes; counts toward your daily limit)
     hence research status <run>      how a research run is going
     hence research list              what is in progress and what recently finished
+    hence trade propose perp:BTC long 200   prepare a trade to review and sign in Hence (places nothing)
+    hence trade status <proposal>    what happened to it
+    hence trade list                 the trades prepared from this terminal
     hence tools                      everything the server offers right now
     hence call <tool> --arg k=v      any tool, including ones newer than this release
 
@@ -34,6 +37,7 @@ from .client import DEFAULT_SERVER, Client, CliError, SignInNeeded, ToolFailed, 
 from .store import Store
 
 UUID = re.compile(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}')
+PROPOSAL = re.compile(r'pr_[A-Za-z0-9_-]{22}(?![A-Za-z0-9_-])')
 
 
 def _parser():
@@ -110,6 +114,21 @@ def _parser():
     status.add_argument('run', help='the run id `hence research start` printed')
     status.add_argument('--wait', action='store_true', help='stay and report when it finishes (checks once a minute)')
     rsub.add_parser('list', help='what is in progress and what recently finished', parents=[common])
+
+    trade = sub.add_parser('trade', help='prepare a trade to review and sign in Hence; it places nothing (needs hence login)', parents=[common])
+    xsub = trade.add_subparsers(dest='what', metavar='propose|status|list')
+    propose = xsub.add_parser('propose', help='prepare one perpetual order; you review and sign it in Hence', parents=[common])
+    propose.add_argument('market', help='a market id from `hence markets`, such as perp:BTC or perp:xyz:NVDA')
+    propose.add_argument('side', choices=['long', 'short'])
+    propose.add_argument('size', type=float, help="the position's value in US dollars (not the margin)")
+    propose.add_argument('--leverage', type=int, help="leave out to keep your own setting for the market")
+    propose.add_argument('--limit', type=float, metavar='PRICE', help='make it a limit order at this price')
+    propose.add_argument('--note', help='why, in a sentence or two; shown in Hence beside the trade')
+    propose.add_argument('--valid-hours', type=int, help='how long you have to act on it (default 24, at most 72)')
+    propose.add_argument('--yes', action='store_true', help='do not ask before sending it to your Hence account')
+    tstatus = xsub.add_parser('status', help='what happened to a prepared trade', parents=[common])
+    tstatus.add_argument('proposal', help='the proposal id `hence trade propose` printed, or its Hence link')
+    xsub.add_parser('list', help='the trades prepared from this terminal', parents=[common])
 
     call = sub.add_parser('call', help='call any tool by name', parents=[common])
     call.add_argument('tool')
@@ -333,6 +352,40 @@ def run(argv, out=None, err=None, store=None, sender=None, open_browser=None, st
             state = _follow(server, started['run']['run_id'], store, sender, err, sleep, clock)
             print(render.show('get_thesis_research', state, as_json=ns.json), file=out)
             return 0 if state.get('thesis_id') else 1
+        if ns.command == 'trade':
+            if ns.what == 'list':
+                print(render.show('get_trade_proposals', _call_signed_in(server, 'get_trade_proposals', {}, store, sender), as_json=ns.json), file=out)
+                return 0
+            if ns.what == 'status':
+                found = PROPOSAL.search(ns.proposal)
+                if not found:
+                    raise CliError('"%s" is not a proposal id or a Hence proposal link.' % ns.proposal)
+                state = _call_signed_in(server, 'get_trade_proposals', {'proposal_id': found.group(0)}, store, sender)
+                print(render.show('get_trade_proposals', state, as_json=ns.json), file=out)
+                return 0
+            if ns.what != 'propose':
+                raise CliError('Say `hence trade propose <market> <long|short> <size>`, `hence trade status <proposal>` or `hence trade list`.')
+            request = {'market_id': ns.market, 'side': ns.side, 'size_usd': int(ns.size) if ns.size == int(ns.size) else ns.size}
+            if ns.leverage is not None:
+                request['leverage'] = ns.leverage
+            if ns.limit is not None:
+                request.update(order_type='limit', limit_price=ns.limit)
+            if ns.note:
+                request['note'] = ns.note
+            if ns.valid_hours is not None:
+                request['valid_for_hours'] = ns.valid_hours
+            if not ns.yes:
+                # it lands in the person's Hence account: they say yes first. Nothing is placed either way.
+                print('Prepare for review in Hence: %s %s, $%s%s%s' % (
+                    ns.side, ns.market, ('%g' % ns.size), (' at %dx' % ns.leverage) if ns.leverage is not None else '',
+                    (', limit %g' % ns.limit) if ns.limit is not None else ', market order'), file=err)
+                ask = confirm or (lambda: (stdin or sys.stdin).isatty() and input(
+                    'This places nothing: it waits in Hence for you to review and sign. Send it? [y/N] ').strip().lower() in ('y', 'yes'))
+                if not ask():
+                    raise CliError('Not sent. To send without being asked, add --yes.')
+            answer = _call_signed_in(server, 'propose_trade', request, store, sender)
+            print(render.show('propose_trade', answer, as_json=ns.json), file=out)
+            return 0 if answer.get('proposed') is True else 1
         if ns.command == 'draft':
             if ns.what == 'new':
                 print(json.dumps(TEMPLATE, indent=2), file=out)

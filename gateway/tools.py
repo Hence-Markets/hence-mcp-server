@@ -650,6 +650,59 @@ def get_thesis_research(args, up, account):
     return out
 
 
+# ── a trade prepared for the person to review and sign in Hence ─────────────────────────────
+# "Propose, I approve". The agent says what the trade is; Hence stores it as words; the person
+# opens it in Hence, their own order ticket is filled in, and they review and sign it with
+# their own wallet. No tool here places an order, and none could: this server holds no wallet,
+# no key and no route to a venue. Offered only when its own switch is on (config.trades_active).
+
+PROPOSE_TRADE = {
+    'type': 'object',
+    'additionalProperties': False,
+    'required': ['market_id', 'side', 'size_usd'],
+    'properties': {
+        'market_id': {'type': 'string', 'maxLength': 80,
+                      'description': 'A perpetual, exactly as search_markets returned it (perp:BTC, perp:xyz:NVDA). Spot tokens and outcome markets cannot be proposed yet.'},
+        'side': {'type': 'string', 'enum': ['long', 'short']},
+        'size_usd': {'type': 'number', 'minimum': 10, 'maximum': 100000,
+                     'description': 'The position\'s value in US dollars. This is the size of the position, not the margin: at 3x leverage a 300 position needs about 100 of margin.'},
+        'leverage': {'type': 'integer', 'minimum': 1, 'maximum': 50,
+                     'description': 'Leave out to keep the person\'s own setting for the market. The ticket lowers it to the market\'s maximum.'},
+        'order_type': {'type': 'string', 'enum': ['market', 'limit'], 'description': 'Leave out for a market order.'},
+        'limit_price': {'type': 'number', 'exclusiveMinimum': 0, 'description': 'Required for a limit order; leave out for a market order.'},
+        'note': {'type': 'string', 'maxLength': 280, 'description': 'Why, in one or two sentences. The person sees it in Hence, marked as your words.'},
+        'valid_for_hours': {'type': 'integer', 'minimum': 1, 'maximum': 72, 'description': 'How long the person has to act on it. Leave out for 24.'},
+    },
+}
+GET_PROPOSALS = {
+    'type': 'object',
+    'additionalProperties': False,
+    'properties': {'proposal_id': {'type': 'string', 'description': 'From propose_trade. Leave out to list the trades you prepared for this person.'}},
+}
+
+
+def propose_trade(args, up, account):
+    _unknown_keys(args, PROPOSE_TRADE)
+    out = shape.trade_propose(account.post('/api/agents/v1/trades/proposals', args))
+    if out is None:
+        raise appauth.Unavailable('Hence gave an answer that could not be read (proposed trade). Ask again: the same request reaches the same proposal')
+    return out
+
+
+def get_trade_proposals(args, up, account):
+    _unknown_keys(args, GET_PROPOSALS)
+    proposal_id = _string(args, 'proposal_id', 64)
+    if not proposal_id:
+        out = shape.trade_list(account.get('/api/agents/v1/trades/proposals'))
+    elif not shape.PROPOSAL_RE.match(proposal_id):
+        raise ToolError('`proposal_id` is not a proposal id. Use the one propose_trade returned.')
+    else:
+        out = shape.trade_proposal(account.get('/api/agents/v1/trades/proposals/' + proposal_id))
+    if out is None:
+        raise appauth.Unavailable('Hence gave an answer that could not be read (proposed trade)')
+    return out
+
+
 def _tool(name, title, description, schema, handler, scope=None, writes=False):
     tool = {
         'name': name, 'title': title, 'description': description, 'inputSchema': schema,
@@ -749,9 +802,31 @@ RESEARCH_TOOLS = [
 ]
 
 
+# Offered only while config.trades_active(). Neither places an order: the first stores a trade
+# for the person to review and sign in Hence, the second reads back what they did with it.
+TRADE_TOOLS = [
+    _tool('propose_trade', 'Prepare a trade for the person',
+          'Prepare ONE perpetual order for the person to review and sign in Hence. It does NOT place the trade and you '
+          'cannot place one: Hence stores it, the person opens the returned url, their own order ticket is filled in '
+          'with your numbers, and they review and sign it with their own wallet (they can change anything first). Only '
+          'when the person has asked for this trade or agreed to it in this conversation. Find the market with '
+          'search_markets first. `size_usd` is the position\'s value, not the margin. Never say the trade was made: '
+          'say it is waiting for them in Hence, give the url, and pass on every warning. Hence adds its fee to the '
+          'order they sign; `hence_fee` says the most it can be.',
+          PROPOSE_TRADE, propose_trade, scope='trades:propose', writes=True),
+    _tool('get_trade_proposals', 'What happened to a prepared trade',
+          'Where a trade you prepared stands: waiting, opened by the person, placed (with whether the venue\'s own '
+          'record confirms the fill), dismissed, expired or withdrawn. Without a proposal_id, lists the trades you '
+          'prepared for this person. Only `placed` means an order exists, and the order is what the person placed, '
+          'which may differ from what you proposed. For their positions, use get_my_portfolio.',
+          GET_PROPOSALS, get_trade_proposals, scope='trades:propose'),
+]
+
+
 def listed():
     """The tools this server offers right now, in a stable order."""
-    return TOOLS + (ACCOUNT_TOOLS if config.accounts_active() else []) + (RESEARCH_TOOLS if config.research_active() else [])
+    return (TOOLS + (ACCOUNT_TOOLS if config.accounts_active() else []) + (RESEARCH_TOOLS if config.research_active() else [])
+            + (TRADE_TOOLS if config.trades_active() else []))
 
 
 def find(name):

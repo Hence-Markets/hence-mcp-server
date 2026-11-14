@@ -603,8 +603,8 @@ class Packaging(unittest.TestCase):
         self.assertRegex(front, r'(?m)^name: hence$')
         description = re.search(r'(?m)^description: (.+)$', front).group(1)
         self.assertLessEqual(len(description), 1024)
-        known = {t['name'] for t in tools.TOOLS + tools.ACCOUNT_TOOLS}
-        for name in set(re.findall(r'`((?:search|get)_[a-z_]+)`', text)):
+        known = {t['name'] for t in tools.TOOLS + tools.ACCOUNT_TOOLS + tools.RESEARCH_TOOLS + tools.TRADE_TOOLS}
+        for name in set(re.findall(r'`((?:search|get|propose|start|save|check|list)_[a-z_]+)`', text)):
             self.assertIn(name, known, name)
         self.assertIn(client.DEFAULT_SERVER, text)
         sub = {a.dest: a for a in main._parser()._subparsers._group_actions}['command'].choices

@@ -29,9 +29,10 @@ person opens the returned link in Hence.
 | `search_markets` | What trades on Hence and where: perpetuals with live price, funding and open interest, and Robinhood Chain spot tokens |
 | `get_thesis_guide` | How to write a Hence thesis yourself: the method and the `hence-thesis/1` format |
 
-With sign-in switched on there are up to eight more, each touching only the connected person's own account.
-Two of them change something: `save_thesis_draft` leaves a draft, and `start_thesis_research` starts the
-person's own research run. Neither publishes on the agent's say-so, trades, or moves money.
+With sign-in switched on there are up to ten more, each touching only the connected person's own account.
+Three of them change something: `save_thesis_draft` leaves a draft, `start_thesis_research` starts the
+person's own research run, and `propose_trade` prepares a trade for the person to review and sign in Hence.
+None publishes on the agent's say-so, places an order, or moves money.
 
 | Tool | What it reads | Needs |
 |---|---|---|
@@ -43,6 +44,8 @@ person's own research run. Neither publishes on the agent's say-so, trades, or m
 | `save_thesis_draft` | Puts that thesis in the person's Hence library as a private draft | `theses:write` |
 | `get_thesis_research` | The state of a Hence research run: what it is doing now, or the thesis once there is one. Without a run id, what is in progress and what recently finished | `theses:read` |
 | `start_thesis_research` | Asks Hence to research an idea for the person, steered by their guidance, must-include and exclude lists and venue. Takes 20 to 40 minutes and counts toward their daily limit. Offered only with `HENCE_MCP_RESEARCH=1` | `theses:research` |
+| `propose_trade` | Prepares one perpetual order (market, side, size, leverage, market or limit) for the person to review and sign in Hence. Places nothing. Offered only with `HENCE_MCP_TRADES=1` | `trades:propose` |
+| `get_trade_proposals` | Where a prepared trade stands: waiting, opened, placed (and whether the venue's record confirms the fill), dismissed, expired or withdrawn. Offered only with `HENCE_MCP_TRADES=1` | `trades:propose` |
 
 Few tools on purpose. A caller pays for every tool description on every turn; the whole list
 is about a thousand tokens.
@@ -77,6 +80,34 @@ which must match the app's `AGENT_RESEARCH_ACTIVE`), its own permission, and cou
 person's daily research limit. The same request on the same day reaches the same run, so a
 retry never starts a second one.
 
+## Preparing a trade
+
+"Propose, I approve". `propose_trade` takes a perpetual from `search_markets`, a side, a size
+in dollars (the position's value, not the margin) and optionally a leverage, a limit price, a
+one-line reason and how long it stays open. Hence checks the market against its own listings
+and stores the proposal. The answer carries a link.
+
+The person opens the link in Hence. The page shows what the agent prepared and who prepared
+it; one button fills the terminal's own order ticket with those numbers and takes them there.
+From that point nothing is new: they can change any number, they press the ticket's button,
+they review the order and they sign it with their own wallet. Hence's fee is attached by the
+ticket, as on any order they type. An order filled in from an agent always shows the review
+step.
+
+What this server can and cannot do:
+
+- It **cannot place an order.** It holds no wallet and no key, and the only thing it sends is
+  the proposal's words, to one path of the app.
+- It **never says a trade was made** unless the app says `placed` and sends the order. That
+  needs the person's own order receipt for the same market and side; `confirmed_by_venue`
+  needs the venue's own fill record.
+- A proposal **expires** (a day by default, three at most) and stops being openable when the
+  person dismisses it or disconnects the agent.
+- Perpetuals only for now. Spot tokens, outcome markets and thesis baskets are refused.
+
+Its own switch (`HENCE_MCP_TRADES`, which must match the app's `AGENT_TRADES_ACTIVE`) and its
+own permission, `trades:propose`.
+
 ## Cards inside the chat
 
 In a host that supports MCP Apps (Claude, Claude Desktop, VS Code Copilot and others), a
@@ -90,6 +121,10 @@ puts every value on the page as text and never as markup, shows an unread figure
 shows Hence's own sentence when a tool could not answer. The only thing it asks the host for
 is to open a link. A host without card support ignores it: every tool still returns its whole
 answer as text.
+
+The same page draws a trade the agent prepared (`propose_trade`, `get_trade_proposals`): the
+market, side, size, leverage and order type, the agent's reason marked as the agent's, and a
+"Review and sign in Hence" button. It says "not placed" until the app itself reports an order.
 
 ## The `hence` command
 
@@ -116,6 +151,9 @@ hence draft save thesis.json        # save it as a private draft (asks first; --
 hence research start "<idea>"       # ask Hence to research it (asks first; --wait to stay until it is done)
 hence research status <run>         # how a run is going
 hence research list                 # what is in progress and what recently finished
+hence trade propose perp:BTC long 200   # prepare a trade to review and sign in Hence (asks first; places nothing)
+hence trade status <proposal>       # what happened to it
+hence trade list                    # the trades prepared from this terminal
 hence tools                         # everything the server offers right now
 hence call <tool> --arg key=value   # any tool by name
 ```
@@ -242,6 +280,7 @@ docker build -t hence-mcp-server . && docker run --rm -p 127.0.0.1:4340:4340 -e 
 | `HENCE_MCP_ACCOUNTS` | `0` | Strictly `1` turns sign-in on. It also needs the secret below; with either missing, the signed-in tool is not listed and no sign-in is advertised |
 | `HENCE_MCP_GATEWAY_SECRET` | unset | The secret this server signs its calls to the Hence app with, at least 32 characters. The app holds the same value |
 | `HENCE_MCP_RESEARCH` | `0` | Strictly `1` offers `start_thesis_research`. Needs sign-in on, and the app's `AGENT_RESEARCH_ACTIVE=1` |
+| `HENCE_MCP_TRADES` | `0` | Strictly `1` offers `propose_trade` and `get_trade_proposals`. Needs sign-in on, and the app's `AGENT_TRADES_ACTIVE=1` |
 | `HENCE_MCP_RESOURCE` | `https://mcp.hence.markets/mcp` | This server's own address. A credential is issued for exactly this address |
 | `HENCE_AUTH_ISSUER` | `https://app.hence.markets` | Who signs people in |
 

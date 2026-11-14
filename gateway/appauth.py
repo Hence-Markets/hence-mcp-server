@@ -39,14 +39,20 @@ from . import config
 INTROSPECT = '/api/agents/v1/introspect'
 # Every path this module may read under a connection. A new signed-in tool adds its path here,
 # and tests/test_tools.py pins the list: this server can reach nothing it was not given.
-ACCOUNT_PATHS = ('/api/agents/v1/whoami', '/api/agents/v1/theses', '/api/agents/v1/portfolio', '/api/agents/v1/research')
+ACCOUNT_PATHS = ('/api/agents/v1/whoami', '/api/agents/v1/theses', '/api/agents/v1/portfolio', '/api/agents/v1/research',
+                 '/api/agents/v1/trades/proposals')
 _ID = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
-ACCOUNT_PATTERNS = (re.compile(r'^/api/agents/v1/theses/%s(/performance)?$' % _ID), re.compile(r'^/api/agents/v1/research/%s$' % _ID))
+ACCOUNT_PATTERNS = (re.compile(r'^/api/agents/v1/theses/%s(/performance)?$' % _ID), re.compile(r'^/api/agents/v1/research/%s$' % _ID),
+                    re.compile(r'^/api/agents/v1/trades/proposals/pr_[A-Za-z0-9_-]{22}$'))
 # The only things this server may SEND under a connection: a thesis the agent wrote, to be
 # checked, or put in the person's library as a private draft (the person saves it themselves);
 # and a request for Hence to research an idea, which is the person's own research run under
-# their own daily limit. None of them publishes on the agent's say-so or touches money.
-WRITE_PATHS = ('/api/agents/v1/theses/check', '/api/agents/v1/theses/drafts', '/api/agents/v1/research')
+# their own daily limit; and a trade PREPARED for the person: a market, a side and a size that
+# Hence stores as words and that fill in the person's own order ticket when they open it. None
+# of them publishes on the agent's say-so, and none places an order or moves money: the person
+# reviews and signs every trade in Hence, with their own wallet.
+WRITE_PATHS = ('/api/agents/v1/theses/check', '/api/agents/v1/theses/drafts', '/api/agents/v1/research',
+               '/api/agents/v1/trades/proposals')
 # what Hence may answer "no" with, in words meant for the person's agent
 REFUSALS = (400, 403, 404, 409, 413, 422)
 
