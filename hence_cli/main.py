@@ -91,6 +91,7 @@ def _parser():
 
     portfolio = sub.add_parser('portfolio', help='your open positions and trading results (needs hence login)', parents=[common])
     portfolio.add_argument('--days', type=int, help='window for the per-market results (1 to 365)')
+    portfolio.add_argument('--spot', action='store_true', help='also read Robinhood Chain tokens and wallet stablecoins (slower)')
 
     sub.add_parser('guide', help='how to write a Hence thesis yourself', parents=[common])
     draft = sub.add_parser('draft', help='a thesis you wrote: check it, or save it as a draft (needs hence login)', parents=[common])
@@ -186,7 +187,7 @@ def _arguments(ns):
             return 'get_my_thesis', some(thesis_id=found.group(0).lower(), period_days=ns.days)
         raise CliError('Say `hence my theses` or `hence my thesis <id>`.')
     if ns.command == 'portfolio':
-        return 'get_my_portfolio', some(history_days=ns.days)
+        return 'get_my_portfolio', some(history_days=ns.days, include_spot=ns.spot)
     if ns.command == 'guide':
         return 'get_thesis_guide', {}
     if ns.command == 'call':

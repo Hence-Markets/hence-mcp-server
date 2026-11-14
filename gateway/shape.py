@@ -369,19 +369,34 @@ def portfolio(data):
             'wallets_owned': num(pos.get('wallets_owned')), 'wallets_read': num(pos.get('wallets_read')),
             'wallets_not_read': num(pos.get('wallets_not_read')), 'truncated': pos.get('truncated') is True,
         },
+        # the Hyperliquid account by its mode, its outcome positions and (when asked for) spot balances: each as the
+        # app computed it. A section the app did not send is absent; one it could not read is null inside and named.
+        'account': _section(data.get('account'), ('wallets', 'total_value_usd', 'total_cash_available_usd', 'complete', 'matches', 'note')),
+        'outcome_positions': _section(data.get('outcomes'), ('positions', 'complete', 'note')),
         'trading_results': data.get('history') if isinstance(data.get('history'), dict) else None,
         'trading_results_days': num(data.get('history_days')),
         'last_recorded_value': data.get('last_recorded_value') if isinstance(data.get('last_recorded_value'), dict) else None,
         'unavailable': [text(u) for u in data['unavailable'] if isinstance(u, str)],
         'not_included': [text(n, 300) for n in data['not_included'] if isinstance(n, str)],
         'as_of_ms': num(data.get('as_of_ms')),
-        'note': ('This is not the whole portfolio: see not_included. open_positions is null when positions could not be read at all, '
+        'note': ('This is not the whole portfolio: see not_included, and never add its parts into one total (the Hence app itself '
+                 'shows more than one). account.total_value_usd is the Hyperliquid account only and is null unless every wallet was read; '
+                 'a wallet with entries in `unread` has no value stated. An outcome position or a token with value null was not priced: '
+                 'it is not zero. open_positions is null when positions could not be read at all, '
                  'and positions.complete is false when some wallet or venue could not be read. Trading results are realized results '
                  'from recorded fills; if trading_results.has_history is false, nothing has been recorded and the zeros mean nothing. '
                  'last_recorded_value is what the Hence app last stored, at recorded_at_ms: it is not the value now. '
                  'Nothing here is investment advice.'),
     }
+    spot = _section(data.get('spot'), ('wallets', 'tokens_value_usd', 'stablecoins_value_usd', 'complete', 'wallets_owned', 'wallets_read', 'matches', 'note'))
+    if spot is not None:
+        out['spot'] = spot
     return out
+
+
+def _section(value, keys):
+    """A section of the portfolio by allowlist, or None when the app did not send one."""
+    return {k: value.get(k) for k in keys} if isinstance(value, dict) else None
 
 
 def thesis_check(data):

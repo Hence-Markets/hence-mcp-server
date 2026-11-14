@@ -526,6 +526,9 @@ GET_MY_PORTFOLIO = {
     'properties': {
         'history_days': {'type': 'integer', 'minimum': 1, 'maximum': 365, 'default': 30,
                          'description': 'The window for the per-market trading results.'},
+        'include_spot': {'type': 'boolean', 'default': False,
+                         'description': 'Also read Robinhood Chain tokens and wallet stablecoins. Slower and costlier (read on-chain for every wallet): '
+                                        'ask only when the person wants their spot balances.'},
     },
 }
 
@@ -536,7 +539,10 @@ def get_my_portfolio(args, up, account):
     null and named, and `not_included` travels with every answer."""
     _unknown_keys(args, GET_MY_PORTFOLIO)
     days = _integer(args, 'history_days', 1, 365, 30)
-    data = _account_dict(account.get('/api/agents/v1/portfolio', {'days': days}), 'portfolio')
+    query = {'days': days}
+    if _boolean(args, 'include_spot', False):
+        query['include'] = 'spot'
+    data = _account_dict(account.get('/api/agents/v1/portfolio', query), 'portfolio')
     out = shape.portfolio(data)
     if out is None:
         raise appauth.Unavailable('Hence gave an answer that could not be read (portfolio)')
@@ -839,10 +845,12 @@ ACCOUNT_TOOLS = [
           GET_MY_THESIS, get_my_thesis, scope='theses:read'),
     _tool('get_my_portfolio', 'Your positions and results',
           'What the person using this agent holds and has done on Hence: open perpetual positions read live from the '
-          'venue, realized trading results from recorded fills, and the last account value Hence recorded (with its '
-          'date). It is NOT the whole portfolio: `not_included` lists what is missing (cash, spot balances, outcome '
-          'positions). Never present it as a total. If `positions.complete` is false or a section is in `unavailable`, '
-          'say what could not be read; a null is unknown, never zero. Needs their Hence account connected.',
+          'venue, their Hyperliquid account value and available cash, outcome-market positions, realized trading '
+          'results from recorded fills, and the last account value Hence recorded (with its date). With `include_spot`, '
+          'also Robinhood Chain tokens and wallet stablecoins. It is NOT one total: `not_included` lists what is '
+          'missing, and the parts must not be added together. If `positions.complete` is false, a wallet has entries '
+          'in `unread`, or a section is in `unavailable`, say what could not be read; a null is unknown, never zero. '
+          'Needs their Hence account connected.',
           GET_MY_PORTFOLIO, get_my_portfolio, scope='portfolio:read'),
     _tool('check_thesis', 'Check a thesis you wrote',
           'Have Hence check a thesis you wrote in the %s format (see get_thesis_guide). Saves nothing. Returns every '

@@ -41,7 +41,7 @@ None publishes on the agent's say-so, places an order, or moves money.
 | `get_my_account` | The connected person's Hence username | Their Hence account connected, permission `account:read` |
 | `list_my_theses` | Their theses: written, saved, followed, held on paper or archived, private ones included | `theses:read` |
 | `get_my_thesis` | One of them in full, with versions and a price history | `theses:read` |
-| `get_my_portfolio` | Open perpetual positions read live, realized trading results, and the last account value Hence recorded. It says what it does not include (cash, spot balances, outcome positions) | `portfolio:read` |
+| `get_my_portfolio` | Open perpetual positions read live, the Hyperliquid account's value and available cash (by its account mode), outcome-market positions, realized trading results, and the last account value Hence recorded. With `include_spot`, Robinhood Chain tokens and wallet stablecoins too. It says what it does not include, and never adds the parts into one total | `portfolio:read` |
 | `check_thesis` | Hence's verdict on a thesis the agent wrote: every problem at once, warnings, and the thesis as Hence would store it. Saves nothing | `theses:write` |
 | `save_thesis_draft` | Puts that thesis in the person's Hence library as a private draft | `theses:write` |
 | `get_thesis_research` | The state of a Hence research run: what it is doing now, or the thesis once there is one. Without a run id, what is in progress and what recently finished | `theses:read` |
@@ -176,7 +176,8 @@ hence login                         # connect this terminal to your Hence accoun
 hence whoami
 hence my theses                     # your own theses, private ones included
 hence my thesis <id or link>        # one of them in full
-hence portfolio                     # your open positions and trading results
+hence portfolio                     # your positions, account value and cash, outcome positions, trading results
+hence portfolio --spot              # the same, plus Robinhood Chain tokens and wallet stablecoins (slower)
 hence guide                         # how to write a Hence thesis yourself
 hence draft new > thesis.json       # a blank thesis to fill in
 hence draft check thesis.json       # what is wrong with it; nothing is saved
