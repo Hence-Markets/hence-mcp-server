@@ -1,0 +1,597 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hence thesis</title>
+<style>
+  /* A Hence thesis, a list of them, a market or a list of markets, or a trade prepared for the
+     person, drawn inside a chat (MCP Apps). Self-contained: no
+     script, font, image or request leaves this page. Colours and type come from the host's
+     variables, with fallbacks for a host that sends none. */
+  :root {
+    color-scheme: light dark;
+    --bg: var(--color-background-primary, light-dark(#ffffff, #0e0f12));
+    --bg-2: var(--color-background-secondary, light-dark(#f5f5f6, #16171b));
+    --text: var(--color-text-primary, light-dark(#111114, #f3f3f4));
+    --dim: var(--color-text-secondary, light-dark(#5c5c66, #9a9aa2));
+    --line: var(--color-border-primary, light-dark(rgba(0,0,0,.12), rgba(255,255,255,.12)));
+    --up: var(--color-text-success, light-dark(#147a45, #5fcf91));
+    --down: var(--color-text-danger, light-dark(#b3382c, #f08d83));
+    --warn: var(--color-text-warning, light-dark(#8a5a00, #f4c39a));
+    --radius: var(--border-radius-md, 10px);
+    font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: transparent; color: var(--text); }
+  /* The host sizes the frame to the height this page reports. A scrollbar here would take width,
+     reflow the text taller and never go away; it stays scrollable for a host that does not resize. */
+  html { scrollbar-width: none; }
+  html::-webkit-scrollbar { display: none; }
+  body { padding: 2px; font-size: 13.5px; line-height: 1.45; }
+  .card { border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); padding: 16px; overflow-wrap: anywhere; }
+  .card + .card { margin-top: 10px; }
+  .eyebrow { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); margin-bottom: 6px; }
+  h1 { font-size: 17px; line-height: 1.3; margin: 0 0 4px; font-weight: 600; }
+  h2 { font-size: 14px; line-height: 1.35; margin: 0 0 2px; font-weight: 600; }
+  .by { color: var(--dim); font-size: 12.5px; margin-bottom: 10px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+  .chip { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); }
+  p { margin: 0 0 12px; }
+  .label { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); margin: 14px 0 6px; }
+  .row { display: grid; grid-template-columns: minmax(84px, 1.2fr) 44px 3fr 48px; gap: 8px; align-items: center; padding: 4px 0; font-size: 12.5px; }
+  .sym { font-weight: 600; }
+  .side.long { color: var(--up); } .side.short { color: var(--down); }
+  .bar { height: 6px; border-radius: 3px; background: var(--bg-2); overflow: hidden; }
+  .bar > span { display: block; height: 100%; border-radius: 3px; background: var(--up); }
+  .bar.short > span { background: var(--down); }
+  .w { text-align: right; font-variant-numeric: tabular-nums; color: var(--dim); }
+  .figs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .fig { background: var(--bg-2); border-radius: 8px; padding: 8px 10px; }
+  .fig b { display: block; font-size: 15px; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .fig span { font-size: 11px; color: var(--dim); }
+  .pos { color: var(--up); } .neg { color: var(--down); } .na { color: var(--dim); }
+  .small { font-size: 11.5px; color: var(--dim); margin: 8px 0 0; }
+  .warnline { font-size: 12px; color: var(--warn); margin: 8px 0 0; }
+  ul { margin: 0; padding-left: 16px; } li { margin: 0 0 4px; font-size: 12.5px; }
+  .open { display: inline-block; margin-top: 14px; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg-2);
+          color: var(--text); font: inherit; font-weight: 600; font-size: 12.5px; text-decoration: none; cursor: pointer; }
+  .item { padding: 12px 0; border-top: 1px solid var(--line); }
+  .item:first-of-type { border-top: none; padding-top: 0; }
+  .item p { margin: 4px 0 6px; color: var(--dim); font-size: 12.5px; }
+  .item .open { margin-top: 4px; padding: 4px 10px; font-size: 12px; }
+  .state { color: var(--dim); }
+  .mrow { display: grid; grid-template-columns: minmax(56px, auto) minmax(0, 1fr) auto 62px; gap: 10px; align-items: baseline; padding: 8px 0;
+          border-top: 1px solid var(--line); color: inherit; text-decoration: none; font-size: 12.5px; }
+  .mrow:first-of-type { border-top: none; }
+  a.mrow { cursor: pointer; }
+  .mrow .nm { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mrow .pr, .mrow .ch { text-align: right; font-variant-numeric: tabular-nums; }
+  .quote { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; }
+  .quote b { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .quote span { font-size: 13px; font-variant-numeric: tabular-nums; }
+  .spark { display: block; width: 100%; height: 64px; margin: 4px 0 2px; }
+  .spark polyline { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; stroke: var(--dim); }
+  .spark polyline.pos { stroke: var(--up); } .spark polyline.neg { stroke: var(--down); }
+  @media (max-width: 420px) { .figs { grid-template-columns: 1fr 1fr; } .row { grid-template-columns: minmax(70px, 1.2fr) 40px 2fr 44px; } }
+</style>
+</head>
+<body>
+<div id="root"><div class="card state" id="waiting">Reading Hence…</div></div>
+<script>
+(function () {
+  'use strict';
+  /* The view's half of the MCP Apps protocol (JSON-RPC over postMessage), with no library.
+     Everything shown is put on the page as text, never as markup: thesis text is written by
+     Hence users. A figure that was not read is shown as "n/a", never as zero. */
+  var root = document.getElementById('root');
+  var nextId = 1, waiting = {}, canOpen = false;
+
+  function post(message) { window.parent.postMessage(message, '*'); }
+  function request(method, params) {
+    var id = nextId++;
+    return new Promise(function (resolve, reject) {
+      waiting[id] = { resolve: resolve, reject: reject };
+      post({ jsonrpc: '2.0', id: id, method: method, params: params || {} });
+    });
+  }
+  function notify(method, params) { post({ jsonrpc: '2.0', method: method, params: params || {} }); }
+
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined && text !== null) node.textContent = String(text);
+    return node;
+  }
+  function isNum(v) { return typeof v === 'number' && isFinite(v); }
+  function pct(v) { return isNum(v) ? (v > 0 ? '+' : '') + v.toFixed(2) + '%' : 'n/a'; }
+  function tone(v) { return isNum(v) ? (v > 0 ? 'pos' : v < 0 ? 'neg' : '') : 'na'; }
+  function hence(url) { return typeof url === 'string' && /^https:\/\/[^\s"'<>]+$/.test(url) ? url : null; }
+
+  // Makes an <a> open a Hence address through the host. False (and no link) when the address is not a plain https one.
+  function linkTo(a, url) {
+    var safe = hence(url);
+    if (!safe) return false;
+    a.href = safe; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.addEventListener('click', function (ev) {
+      if (!canOpen) return;                       // no host support: the plain link does it
+      ev.preventDefault();
+      request('ui/open-link', { url: safe }).catch(function () { window.open(safe, '_blank', 'noopener'); });
+    });
+    return true;
+  }
+  function openButton(url, label) {
+    var a = el('a', 'open', label || 'Open in Hence');
+    return linkTo(a, url) ? a : null;
+  }
+
+  function holdings(card, list, cash) {
+    card.appendChild(el('div', 'label', 'Holdings'));
+    list.forEach(function (h) {
+      if (!h || typeof h !== 'object') return;
+      var row = el('div', 'row');
+      row.appendChild(el('span', 'sym', h.symbol || h.market_id || 'n/a'));
+      row.appendChild(el('span', 'side ' + (h.side === 'short' ? 'short' : 'long'), h.side || 'n/a'));
+      var bar = el('div', 'bar' + (h.side === 'short' ? ' short' : '')), fill = el('span');
+      fill.style.width = (isNum(h.weight_pct) ? Math.max(0, Math.min(100, h.weight_pct)) : 0) + '%';
+      bar.appendChild(fill); row.appendChild(bar);
+      row.appendChild(el('span', 'w', isNum(h.weight_pct) ? h.weight_pct.toFixed(h.weight_pct % 1 ? 1 : 0) + '%' : 'n/a'));
+      card.appendChild(row);
+    });
+    if (isNum(cash) && cash > 0) {
+      var row = el('div', 'row');
+      row.appendChild(el('span', 'sym', 'Cash')); row.appendChild(el('span', 'side', ''));
+      row.appendChild(el('div', 'bar')); row.appendChild(el('span', 'w', cash.toFixed(cash % 1 ? 1 : 0) + '%'));
+      card.appendChild(row);
+    }
+  }
+
+  function performance(card, t) {
+    var p = t.performance;
+    card.appendChild(el('div', 'label', 'Hypothetical price history' + (p && isNum(p.period_days) ? ', ' + p.period_days + ' days' : '')));
+    if (!p || typeof p !== 'object') {
+      // not read is not flat: say so, and say why when Hence did
+      // Hence's sentence carries an instruction for the model after its first full stop; a person is shown the reason only
+      var why = typeof t.performance_unavailable === 'string' ? t.performance_unavailable.split('. Do not')[0].replace(/\.$/, '') : '';
+      card.appendChild(el('div', 'warnline', (why || 'The price history could not be read') + '. No return is shown.'));
+      return;
+    }
+    var figs = el('div', 'figs');
+    [['This basket', p.return_pct], [p.benchmark || 'Benchmark', p.benchmark_return_pct], ['Worst drop', p.max_drawdown_pct]].forEach(function (f) {
+      var box = el('div', 'fig'), value = el('b', tone(f[1]), pct(f[1]));
+      box.appendChild(value); box.appendChild(el('span', '', f[0])); figs.appendChild(box);
+    });
+    card.appendChild(figs);
+    if (p.complete !== true) {
+      card.appendChild(el('div', 'warnline', 'Incomplete: ' + (isNum(p.holdings_left_out) ? p.holdings_left_out : 'some') + ' holdings have no price history and are left out.'));
+    }
+    card.appendChild(el('div', 'small', (p.from && p.to ? p.from + ' to ' + p.to + '. ' : '') + 'Before costs. Not a live track record.'));
+  }
+
+  function thesis(t) {
+    var card = el('div', 'card');
+    card.appendChild(el('div', 'eyebrow', 'Hence thesis'));
+    card.appendChild(el('h1', '', t.title || 'Untitled thesis'));
+    card.appendChild(el('div', 'by', [t.author, t.topic, isNum(t.horizon_days) ? t.horizon_days + ' days' : null].filter(Boolean).join(' · ')));
+    var chips = [];
+    if (t.visibility) chips.push(t.visibility);
+    if (t.status) chips.push(t.status);
+    if (t.yours === true) chips.push('yours');
+    if (t.research_in_progress === true) chips.push('research in progress');
+    if (chips.length) { var c = el('div', 'chips'); chips.forEach(function (x) { c.appendChild(el('span', 'chip', x)); }); card.appendChild(c); }
+    if (t.summary) card.appendChild(el('p', '', t.summary));
+    if (Array.isArray(t.holdings) && t.holdings.length) holdings(card, t.holdings, t.cash_weight_pct);
+    if ('performance' in t) performance(card, t);
+    if (t.invalidation) { card.appendChild(el('div', 'label', 'Wrong if')); card.appendChild(el('p', '', t.invalidation)); }
+    if (Array.isArray(t.checkpoints) && t.checkpoints.length) {
+      card.appendChild(el('div', 'label', 'Checkpoints'));
+      var ul = el('ul');
+      t.checkpoints.slice(0, 3).forEach(function (c) { if (c && c.observable) ul.appendChild(el('li', '', (c.by ? c.by + ': ' : '') + c.observable)); });
+      card.appendChild(ul);
+    }
+    var button = openButton(t.url, 'Review and trade in Hence');
+    if (button) card.appendChild(button);
+    card.appendChild(el('div', 'small', t.text_origin || 'Written by Hence users and the Hence research pipeline.'));
+    return card;
+  }
+
+  function list(value) {
+    var card = el('div', 'card');
+    card.appendChild(el('div', 'eyebrow', value.edition ? 'Hence, featured ' + value.edition : value.which ? 'Your Hence theses' : 'Hence theses'));
+    var rows = value.theses.filter(function (t) { return t && typeof t === 'object'; });
+    if (!rows.length) card.appendChild(el('div', 'state', 'No theses in this list.'));
+    rows.forEach(function (t) {
+      var item = el('div', 'item');
+      item.appendChild(el('h2', '', t.title || 'Untitled thesis'));
+      var meta = [t.author, t.topic];
+      if (t.visibility) meta.push(t.visibility);
+      if ('return_1m_pct' in t) meta.push('1 month ' + pct(t.return_1m_pct));
+      item.appendChild(el('div', 'by', meta.filter(Boolean).join(' · ')));
+      if (t.summary) item.appendChild(el('p', '', t.summary));
+      var button = openButton(t.url, 'Open');
+      if (button) item.appendChild(button);
+      card.appendChild(item);
+    });
+    if (value.unread_note) card.appendChild(el('div', 'warnline', value.unread_note));
+    if (value.note) card.appendChild(el('div', 'small', value.note));
+    return card;
+  }
+
+  /* A trade the agent PREPARED for the person. The card never says it was made: only the app's
+     own "placed" does, and then with whether the venue's record confirms it. The button opens
+     Hence, where the person's own order ticket is filled in and they review and sign. */
+  var STANDS = {
+    waiting: 'Waiting for you in Hence. Nothing has been placed.',
+    opened: 'You opened this in Hence. Nothing is known to have been placed.',
+    dismissed: 'You dismissed this. Nothing was placed.',
+    expired: 'This expired. Nothing was placed.',
+    withdrawn: 'The agent that prepared this is no longer connected, so it can no longer be opened. Nothing was placed.'
+  };
+  function usd(v) { return isNum(v) ? '$' + v.toLocaleString('en-US', { maximumFractionDigits: 2 }) : 'n/a'; }
+  // a price shows its cents from a dollar up ($139.50), and keeps its digits below one
+  function px(v) { return isNum(v) ? '$' + v.toLocaleString('en-US', { minimumFractionDigits: v >= 1 ? 2 : 0, maximumFractionDigits: v >= 100 ? 2 : v >= 1 ? 4 : 8 }) : 'n/a'; }
+  /* A purchase (a spot token, or one side of an outcome market) is a buy and only a buy: it is never
+     drawn with a direction, a leverage or an order type, because its ticket has none. */
+  function purchase(p) { return p.kind !== 'basket' && (p.venue === 'spot' || p.venue === 'outcome'); }
+  // an outcome side's price is the price of one contract, from 0 to 1 dollar: shown in cents, or n/a (never 0)
+  // (a price under 1 cent or over 99 keeps a decimal: 0.126 cents rounded to "0¢" would read as "free")
+  function chance(v) {
+    if (!(isNum(v) && v > 0 && v < 1)) return 'n/a';
+    var c = v * 100;
+    return (c < 1 || c > 99 ? (Math.round(c * 10) / 10) : Math.round(c)) + '¢';
+  }
+  /* ...and what that price means. Only a price read from the order book itself, quoted closely (the asset view:
+     `checked`), is called what the market prices the side at. A figure from the market LIST is the middle of
+     whatever is resting, and the middle of a book nobody quotes (bid 0.1¢, ask 99.6¢) once read as a 50% chance
+     on a strike far from the price: it is called what it is. */
+  function implied(v, checked) {
+    if (!(isNum(v) && v > 0 && v < 1)) return 'no quote right now';
+    return checked ? 'a contract · the market prices this side at about ' + Math.round(v * 100) + '%' : 'a contract · middle of the order book, as listed';
+  }
+  function stands(p) {
+    if (p.status === 'placed' && p.order) {
+      // sent is not bought: a purchase the chain has not confirmed can still fail
+      if (p.order.state === 'pending') return p.venue === 'spot' ? 'You sent this purchase. Hence is confirming it on the chain.' : 'You sent this order. Hence has no result for it yet.';
+      if (p.venue === 'spot') return 'You bought this, and Hence confirmed the purchase on the chain.';
+      if (p.order.state === 'resting') return 'You placed this order. It is resting on the book.';
+      return p.order.confirmed_by_venue === true ? 'You placed this order and it filled.' : 'You placed this order. Hence is confirming the fill with the venue.';
+    }
+    return STANDS[p.status] || 'Hence did not say where this stands.';
+  }
+  function proposal(p, answer) {
+    var card = el('div', 'card');
+    var open = p.status === 'waiting' || p.status === 'opened';
+    var basket = p.kind === 'basket';
+    var bought = basket || purchase(p);        // a basket and a purchase are bought; a perpetual order is placed
+    card.appendChild(el('div', 'eyebrow', (basket ? 'Prepared basket' : purchase(p) ? 'Prepared purchase' : 'Prepared trade') + (open ? (bought ? ' · not bought' : ' · not placed') : '')));
+    var h = el('h1', '');
+    if (basket) {
+      h.appendChild(el('span', 'side long', 'Buy '));
+      h.appendChild(document.createTextNode(p.thesis || 'a thesis'));
+    } else if (purchase(p)) {
+      h.appendChild(el('span', 'side long', 'Buy '));
+      h.appendChild(document.createTextNode(p.market || p.market_id || 'Unknown market'));
+    } else {
+      h.appendChild(el('span', 'side ' + (p.side === 'short' ? 'short' : 'long'), p.side === 'short' ? 'Short ' : 'Long '));
+      h.appendChild(document.createTextNode(p.market || p.market_id || 'Unknown market'));
+    }
+    card.appendChild(h);
+    if (!basket && p.market && p.market_id) card.appendChild(el('div', 'by', p.market_id));
+    var figs = el('div', 'figs');
+    (basket ? [['Amount put in', usd(p.amount_usd)], ['Leverage', isNum(p.leverage) && p.leverage > 1 ? p.leverage + '×' : 'None'],
+               ['Basket', p.basket === 'perps' ? 'Perpetuals' : p.basket === 'spot' ? 'Spot tokens' : 'Its own']]
+            : purchase(p) ? [['Amount to spend', usd(p.size_usd)],
+               [p.venue === 'spot' ? 'Where' : 'Pays', p.venue === 'spot' ? (String(p.market_id || '').indexOf('spot:solana:') === 0 ? 'Solana' : 'Robinhood Chain') : '$1 a contract if right'],
+               [p.venue === 'outcome' ? 'Market closes' : 'Order', p.venue === 'outcome' ? (p.market_closes_at ? String(p.market_closes_at).slice(0, 10) : 'not known') : 'Buy']]
+            : [['Position size', usd(p.size_usd)], ['Leverage', isNum(p.leverage) ? p.leverage + '×' : 'Your setting'],
+               ['Order', p.order_type === 'limit' ? 'Limit ' + px(p.limit_price) : 'Market']]).forEach(function (f) {
+      var fig = el('div', 'fig'); fig.appendChild(el('b', '', f[1])); fig.appendChild(el('span', '', f[0])); figs.appendChild(fig);
+    });
+    card.appendChild(figs);
+    if (p.note) { card.appendChild(el('div', 'label', 'The agent\'s reason, in its own words')); card.appendChild(el('p', '', p.note)); }
+    card.appendChild(el('div', open ? 'small' : 'by', stands(p)));
+    if (answer && Array.isArray(answer.warnings)) answer.warnings.forEach(function (w) { if (typeof w === 'string' && w) card.appendChild(el('div', 'warnline', w)); });
+    if (open) {
+      var button = openButton(p.url, 'Review and sign in Hence');
+      if (button) card.appendChild(button);
+      card.appendChild(el('div', 'small', basket ? 'The thesis opens with this amount filled in. The holdings are the thesis\'s own. Nothing is bought until you sign it there.'
+        : purchase(p) ? 'The ticket for this market opens with this amount filled in. You can change it. Nothing is bought until you review it and sign it there.'
+        : 'The order ticket opens filled in with these numbers. You can change any of them. Nothing is placed until you sign it there.'));
+      if (answer && answer.hence_fee && typeof answer.hence_fee.note === 'string') card.appendChild(el('div', 'small', answer.hence_fee.note));
+    }
+    return card;
+  }
+  function proposals(value) {
+    var card = el('div', 'card');
+    card.appendChild(el('div', 'eyebrow', 'Trades prepared for you'));
+    var rows = value.proposals.filter(function (p) { return p && typeof p === 'object'; });
+    if (!rows.length) card.appendChild(el('div', 'state', 'No trades have been prepared.'));
+    rows.forEach(function (p) {
+      var item = el('div', 'item');
+      var h = el('h2', '');
+      if (p.kind === 'basket') {
+        h.appendChild(el('span', 'side long', 'Buy '));
+        h.appendChild(document.createTextNode((p.thesis || 'a thesis') + ' · ' + usd(p.amount_usd) + (isNum(p.leverage) && p.leverage > 1 ? ' · ' + p.leverage + '×' : '')));
+      } else if (purchase(p)) {
+        h.appendChild(el('span', 'side long', 'Buy '));
+        h.appendChild(document.createTextNode((p.market || p.market_id || 'Unknown market') + ' · ' + usd(p.size_usd)));
+      } else {
+        h.appendChild(el('span', 'side ' + (p.side === 'short' ? 'short' : 'long'), p.side === 'short' ? 'Short ' : 'Long '));
+        h.appendChild(document.createTextNode((p.market || p.market_id || 'Unknown market') + ' · ' + usd(p.size_usd) + (isNum(p.leverage) ? ' · ' + p.leverage + '×' : '')));
+      }
+      item.appendChild(h);
+      item.appendChild(el('p', '', stands(p)));
+      var button = p.status === 'waiting' || p.status === 'opened' ? openButton(p.url, 'Review in Hence') : null;
+      if (button) item.appendChild(button);
+      card.appendChild(item);
+    });
+    return card;
+  }
+  function refused(value) {
+    var card = el('div', 'card');
+    card.appendChild(el('div', 'eyebrow', 'Nothing was prepared'));
+    var ul = el('ul');
+    value.problems.forEach(function (x) { if (x && x.problem) ul.appendChild(el('li', '', (x.field ? x.field + ': ' : '') + x.problem)); });
+    card.appendChild(ul);
+    return card;
+  }
+
+  /* What can be traded on Hence: one asset in full, or a list. Figures are the venue's, as Hence
+     read them; one that was not read is "n/a", never 0. The card places nothing: a row or the
+     button opens the market in Hence, where the person trades. */
+  function big(v) {
+    if (!isNum(v)) return 'n/a';
+    var a = Math.abs(v);
+    return '$' + (a >= 1e9 ? (v / 1e9).toFixed(2) + 'B' : a >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : a >= 1e3 ? (v / 1e3).toFixed(1) + 'K' : v.toFixed(0));
+  }
+  function asOf(unix) {
+    if (!isNum(unix)) return null;
+    var d = new Date(unix * 1000);
+    return isNaN(d.getTime()) ? null : 'Prices read ' + d.toISOString().slice(0, 16).replace('T', ' ') + ' UTC.';
+  }
+  function market(m, value) {
+    var card = el('div', 'card');
+    card.appendChild(el('div', 'eyebrow', 'Hence market · ' + (m.venue || 'venue not read')));
+    if (m.kind === 'outcome') {
+      /* One SIDE of an outcome market: the question, this side, its price as a probability, what it pays and when
+         it closes. The other side is its own contract, named so "against" is never read as a short. */
+      card.appendChild(el('h1', '', m.question || m.name || m.market_id || 'Unknown market'));
+      card.appendChild(el('div', 'by', [m.answer, m.side ? 'Side: ' + m.side : null, 'Outcome market'].filter(Boolean).join(' · ')));
+      var oquote = el('div', 'quote');
+      oquote.appendChild(el('b', '', chance(m.price)));
+      oquote.appendChild(el('span', 'na', implied(m.price)));
+      card.appendChild(oquote);
+      if (m.pays) card.appendChild(el('div', 'small', m.pays));
+      card.appendChild(el('div', 'small', (m.closes_at ? 'Closes ' + String(m.closes_at).slice(0, 16).replace('T', ' ') + ' UTC. ' : '') + 'It can only be bought: to take the other side, buy ' + (m.other_side || 'the other side') + '.'));
+      var obutton = openButton(m.url, 'Open in Hence');
+      if (obutton) card.appendChild(obutton);
+      foot(card, value, false);
+      return card;
+    }
+    card.appendChild(el('h1', '', m.symbol || m.market_id || 'Unknown market'));
+    card.appendChild(el('div', 'by', [m.name, m.kind === 'perp' ? 'Perpetual' : m.kind === 'spot' ? 'Spot token' : null, m.asset_class].filter(Boolean).join(' · ')));
+    if (m.kind === 'perp') {
+      // the price and its day, then the three figures that describe the market
+      var quote = el('div', 'quote');
+      quote.appendChild(el('b', '', px(m.price)));
+      quote.appendChild(el('span', tone(m.change_24h_pct), pct(m.change_24h_pct) + ' in 24 hours'));
+      card.appendChild(quote);
+      var figs = el('div', 'figs');
+      [['Funding, per year', pct(m.funding_apr_pct)], ['Open interest', big(m.open_interest_usd)], ['Traded in 24 hours', big(m.volume_24h_usd)]].forEach(function (f) {
+        var fig = el('div', 'fig'); fig.appendChild(el('b', '', f[1])); fig.appendChild(el('span', '', f[0])); figs.appendChild(fig);
+      });
+      card.appendChild(figs);
+      if (m.funding_apr_pct > 0) card.appendChild(el('div', 'small', 'Funding above zero: holders of a long position pay it, holders of a short receive it.'));
+      else if (m.funding_apr_pct < 0) card.appendChild(el('div', 'small', 'Funding below zero: holders of a short position pay it, holders of a long receive it.'));
+    } else if (isNum(m.price)) {
+      // a spot token with figures from Hence's market snapshot: the same shape, and its own note on how old they can be
+      var squote = el('div', 'quote');
+      squote.appendChild(el('b', '', px(m.price)));
+      squote.appendChild(el('span', tone(m.change_24h_pct), pct(m.change_24h_pct) + ' in 24 hours'));
+      card.appendChild(squote);
+      var sfigs = el('div', 'figs');
+      [['Liquidity', big(m.liquidity_usd)], ['Traded in 24 hours', big(m.volume_24h_usd)], ['Market cap', big(m.market_cap_usd)]].forEach(function (f) {
+        var fig = el('div', 'fig'); fig.appendChild(el('b', '', f[1])); fig.appendChild(el('span', '', f[0])); sfigs.appendChild(fig);
+      });
+      card.appendChild(sfigs);
+      if (m.price_note) card.appendChild(el('div', 'small', m.price_note));
+    } else {
+      card.appendChild(el('p', 'state', m.price_note || 'No price is shown here. Open the link for the live price.'));
+      if (m.contract) card.appendChild(el('div', 'small', 'Contract ' + m.contract));
+    }
+    var button = openButton(m.url, m.kind === 'perp' ? 'Trade in Hence' : 'Open in Hence');
+    if (button) card.appendChild(button);
+    foot(card, value, m.kind === 'perp');
+    return card;
+  }
+  function foot(card, value, priced) {
+    if (value.incomplete) card.appendChild(el('div', 'warnline', value.incomplete));
+    var read = priced ? asOf(value.prices_as_of_unix) : null;      // a time is said only beside a price it is the time of
+    card.appendChild(el('div', 'small', (read ? read + ' ' : '') + 'Nothing here places a trade: you trade in Hence.'));
+  }
+  function markets(value) {
+    var rows = value.markets.filter(function (m) { return m && typeof m === 'object'; });
+    if (rows.length === 1) return market(rows[0], value);
+    var card = el('div', 'card');
+    card.appendChild(el('div', 'eyebrow', 'Hence markets'));
+    if (!rows.length) {
+      // not found in THIS search is not "Hence does not list it": say what the search covers
+      card.appendChild(el('div', 'state', 'No market matched this search.'));
+      if (value.coverage) card.appendChild(el('div', 'small', value.coverage));
+    }
+    rows.forEach(function (m) {
+      var row = el('a', 'mrow');
+      if (!linkTo(row, m.url)) row = el('div', 'mrow');
+      if (m.kind === 'outcome') {
+        // one side of an outcome market: its side where a ticker would be, its price as a probability, no 24 hour change (none is read)
+        row.appendChild(el('span', 'sym', m.side || '?'));
+        row.appendChild(el('span', 'nm', [m.question || m.name, m.answer, 'Outcome market'].filter(Boolean).join(' · ')));
+        row.appendChild(el('span', 'pr', chance(m.price)));
+        row.appendChild(el('span', 'ch na', ''));
+        card.appendChild(row);
+        return;
+      }
+      row.appendChild(el('span', 'sym', m.symbol || '?'));
+      row.appendChild(el('span', 'nm', [m.name, m.venue].filter(Boolean).join(' · ')));
+      // a price that was not passed on (a spot token with figures off) says where to see it, never a number
+      var priced = m.kind === 'perp' || isNum(m.price);
+      row.appendChild(el('span', 'pr', priced ? px(m.price) : 'in Hence'));
+      row.appendChild(el('span', 'ch ' + (priced ? tone(m.change_24h_pct) : 'na'), priced ? pct(m.change_24h_pct) : ''));
+      card.appendChild(row);
+    });
+    if (isNum(value.matches) && value.matches > rows.length) card.appendChild(el('div', 'small', 'Showing ' + rows.length + ' of ' + value.matches + ' matches.'));
+    foot(card, value, rows.some(function (m) { return m.kind === 'perp'; }));
+    return card;
+  }
+
+  /* Research on one asset: its price, 90 days of daily closes drawn as a line, and for a company
+     its analysts, next earnings and headlines. The line is drawn from the closes Hence returned
+     and nothing else: fewer than two points draws no line, and a gap is not filled in. */
+  function spark(points) {
+    var closes = points.map(function (p) { return p && isNum(p.close) ? p.close : null; }).filter(function (c) { return c !== null; });
+    if (closes.length < 2) return null;
+    var w = 300, h = 64, min = Math.min.apply(null, closes), max = Math.max.apply(null, closes), span = max - min;
+    var ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg'), line = document.createElementNS(ns, 'polyline');
+    svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h); svg.setAttribute('preserveAspectRatio', 'none'); svg.setAttribute('class', 'spark');
+    svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', 'Daily closing prices over the period');
+    line.setAttribute('points', closes.map(function (c, i) {
+      var y = span > 0 ? h - 4 - (c - min) / span * (h - 8) : h / 2;
+      return (i / (closes.length - 1) * w).toFixed(1) + ',' + y.toFixed(1);
+    }).join(' '));
+    line.setAttribute('class', closes[closes.length - 1] > closes[0] ? 'pos' : closes[closes.length - 1] < closes[0] ? 'neg' : '');
+    svg.appendChild(line);
+    return svg;
+  }
+  function asset(value) {
+    var a = value.asset, card = el('div', 'card');
+    card.appendChild(el('div', 'eyebrow', 'Hence research' + (a['class'] ? ' · ' + a['class'] : '')));
+    card.appendChild(el('h1', '', a.symbol || a.id || 'Unknown asset'));
+    var prof = value.profile, outcome = a['class'] === 'outcome';
+    if (prof) card.appendChild(el('div', 'by', outcome ? [prof.status === 'open' ? 'Open' : prof.status, prof.closes_at ? 'closes ' + String(prof.closes_at).slice(0, 10) : null].filter(Boolean).join(' · ')
+      : [prof.name, prof.sector, prof.exchange].filter(Boolean).join(' · ')));
+    var q = value.quote, live = q && Array.isArray(q.venues) && q.venues.length ? q.venues[0] : null, ref = q && q.reference ? q.reference : null;
+    if (outcome) {
+      // one side of an outcome market: its price is a probability, and there is no 24 hour change to show
+      if (live) {
+        var oq = el('div', 'quote');
+        oq.appendChild(el('b', '', chance(live.price)));
+        oq.appendChild(el('span', 'na', implied(live.price, true)));
+        card.appendChild(oq);
+        // the book as read: its best bid and ask, and why there is no price when they are far apart
+        if (isNum(live.bid) || isNum(live.ask)) card.appendChild(el('div', 'small', 'Best bid ' + chance(live.bid) + ' · best ask ' + chance(live.ask)));
+      }
+      if (q && q.note) card.appendChild(el('div', 'warnline', q.note));
+      if (prof && prof.pays) card.appendChild(el('div', 'small', prof.pays));
+      if (prof && prof.other_side && prof.other_side.market_id) card.appendChild(el('div', 'small', 'It can only be bought: to take the other side, buy ' + prof.other_side.market_id + (prof.other_side.side ? ' (' + prof.other_side.side + ')' : '') + '.'));
+    } else if (live || ref) {
+      var quote = el('div', 'quote'), change = live ? live.change_24h_pct : ref.change_pct;
+      quote.appendChild(el('b', '', px(live ? live.price : ref.price)));
+      quote.appendChild(el('span', tone(change), pct(change) + (live ? ' in 24 hours' : ' on the day')));
+      card.appendChild(quote);
+      if (!live) card.appendChild(el('div', 'small', 'A reference quote, which may be delayed.'));
+    }
+    var hist = value.history;
+    if (hist && Array.isArray(hist.points)) {
+      var drawn = spark(hist.points);
+      if (drawn) card.appendChild(drawn);
+      // an outcome side moves in percentage POINTS of probability, not in percent of a price
+      card.appendChild(el('div', 'small', (hist.from && hist.to ? hist.from + ' to ' + hist.to + ': ' : '')
+        + (outcome ? (isNum(hist.change_points) ? (hist.change_points > 0 ? '+' : '') + hist.change_points + ' points' : 'n/a') : pct(hist.change_pct))
+        + (hist.source ? ' (' + hist.source + ')' : '')));
+    }
+    var an = value.analysts, earn = value.earnings, figs = [];
+    if (an && an.price_target) figs.push(['Analyst target', px(an.price_target.consensus)]);
+    if (an && an.ratings && an.ratings.consensus) figs.push(['Analyst rating', an.ratings.consensus]);
+    if (earn && earn.next_date) figs.push(['Next earnings', earn.next_date]);
+    if (figs.length) {
+      var box = el('div', 'figs');
+      figs.forEach(function (f) { var fig = el('div', 'fig'); fig.appendChild(el('b', '', f[1])); fig.appendChild(el('span', '', f[0])); box.appendChild(fig); });
+      card.appendChild(box);
+    }
+    var news = value.news;
+    if (news && Array.isArray(news.headlines) && news.headlines.length) {
+      card.appendChild(el('div', 'label', 'Headlines'));
+      var ul = el('ul');
+      news.headlines.slice(0, 3).forEach(function (n) { if (n && n.title) ul.appendChild(el('li', '', n.title + (n.publisher ? ' (' + n.publisher + ')' : ''))); });
+      card.appendChild(ul);
+      card.appendChild(el('div', 'small', 'Headlines are written by their publishers, not by Hence.'));
+    }
+    if (value.analysis && value.analysis.verdict) { card.appendChild(el('div', 'label', 'Hence analysis')); card.appendChild(el('p', '', value.analysis.verdict)); }
+    if (Array.isArray(value.unavailable) && value.unavailable.length) card.appendChild(el('div', 'warnline', 'Could not be read: ' + value.unavailable.join(', ') + '.'));
+    var first = Array.isArray(a.markets) && a.markets.length ? a.markets[0] : null;
+    var button = first ? openButton(first.url, 'Trade in Hence') : null;
+    if (button) card.appendChild(button);
+    card.appendChild(el('div', 'small', (a.tradeable_on_hence === false ? 'Hence does not list a market for this asset: research only. ' : '') + 'Nothing here is investment advice.'));
+    return card;
+  }
+
+  // The host sizes the frame from this. Said after every draw, not only when a ResizeObserver
+  // fires: a frame that is not being painted yet delivers no resize, and the card would stay
+  // at its first height, cut off.
+  function reportSize() {
+    var box = document.body.getBoundingClientRect();
+    notify('ui/notifications/size-changed', { width: Math.ceil(box.width), height: Math.ceil(box.height) });
+  }
+  function show(node) { root.textContent = ''; root.appendChild(node); reportSize(); }
+
+  function render(result) {
+    if (!result || typeof result !== 'object') return;
+    var value = result.structuredContent;
+    if (result.isError || !value || typeof value !== 'object') {
+      // the tool said it could not do it: show its sentence, never an empty card that looks like "nothing found"
+      var text = Array.isArray(result.content) ? result.content.map(function (c) { return c && c.type === 'text' ? c.text : ''; }).join(' ').trim() : '';
+      show(el('div', 'card state', text || 'Hence could not answer. Nothing is shown.'));
+      return;
+    }
+    if (Array.isArray(value.theses)) show(list(value));
+    else if (Array.isArray(value.markets)) show(markets(value));
+    else if (value.asset && typeof value.asset === 'object') show(asset(value));
+    else if (value.proposal && typeof value.proposal === 'object' && value.proposed === true) show(proposal(value.proposal, value));
+    else if (value.proposed === false && Array.isArray(value.problems) && value.problems.length) show(refused(value));
+    else if (Array.isArray(value.proposals)) show(proposals(value));
+    else if (typeof value.proposal_id === 'string') show(proposal(value, null));
+    else if (Array.isArray(value.holdings) || value.title) show(thesis(value));
+    else show(el('div', 'card state', 'Nothing to show for this answer.'));
+  }
+
+  function applyContext(context) {
+    if (!context || typeof context !== 'object') return;
+    var vars = context.styles && context.styles.variables;
+    if (vars && typeof vars === 'object') {
+      Object.keys(vars).forEach(function (name) {
+        if (/^--[a-z0-9-]+$/i.test(name) && typeof vars[name] === 'string') document.documentElement.style.setProperty(name, vars[name]);
+      });
+    }
+    if (context.theme === 'light' || context.theme === 'dark') document.documentElement.style.colorScheme = context.theme;
+  }
+
+  window.addEventListener('message', function (event) {
+    if (event.source !== window.parent) return;
+    var m = event.data;
+    if (!m || m.jsonrpc !== '2.0') return;
+    if (m.id !== undefined && m.method === undefined) {
+      var w = waiting[m.id];
+      if (w) { delete waiting[m.id]; if (m.error) w.reject(m.error); else w.resolve(m.result); }
+      return;
+    }
+    if (m.method === 'ui/notifications/tool-result') render(m.params);
+    else if (m.method === 'ui/notifications/host-context-changed') applyContext(m.params);
+    else if ((m.method === 'ui/resource-teardown' || m.method === 'ping') && m.id !== undefined) post({ jsonrpc: '2.0', id: m.id, result: {} });
+  });
+
+  if (window.ResizeObserver) {
+    // the body's own height, not the document's: the document is never shorter than the frame,
+    // so a card that got smaller would otherwise keep its old height
+    new ResizeObserver(reportSize).observe(document.body);
+  }
+
+  request('ui/initialize', { protocolVersion: '2026-01-26', clientInfo: { name: 'hence-thesis-card', version: '1' }, appCapabilities: {}, capabilities: {} })
+    .then(function (r) {
+      applyContext(r && r.hostContext);
+      canOpen = !!(r && r.hostCapabilities && r.hostCapabilities.openLinks);
+    }, function () { /* a host that refuses still gets a working card with plain links */ })
+    .then(function () { notify('ui/notifications/initialized'); });
+})();
+</script>
+</body>
+</html>

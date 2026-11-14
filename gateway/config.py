@@ -66,6 +66,28 @@ def accounts_active():
     return _env('HENCE_MCP_ACCOUNTS', '0') == '1' and bool(gateway_secret())
 
 
+def research_active():
+    """Whether the tool that starts Hence research is offered. Its own switch, because it is the
+    one tool that spends Hence's money; it must match the app's AGENT_RESEARCH_ACTIVE, or the
+    server would ask people for a permission the app will not give."""
+    return accounts_active() and _env('HENCE_MCP_RESEARCH', '0') == '1'
+
+
+def spot_figures():
+    """Whether a spot token's price, 24 hour change, volume, liquidity and market cap are passed
+    on. They come from Hence's market snapshot, which Hence buys from a data vendor; the owner
+    decided (2026-11-14) that Hence's data is served to people's agents as it is to people. On
+    unless set to '0', so the figures can be withdrawn without a release if a vendor objects."""
+    return _env('HENCE_MCP_SPOT_FIGURES', '1') != '0'
+
+
+def trades_active():
+    """Whether the tools that prepare a trade for the person are offered. Its own switch; it must
+    match the app's AGENT_TRADES_ACTIVE, or the server would ask people for a permission the
+    app will not give. Preparing is all there is: no tool here places an order."""
+    return accounts_active() and _env('HENCE_MCP_TRADES', '0') == '1'
+
+
 def resource():
     """This server's own canonical address. A person's credential is issued for exactly this
     address, and a credential issued for any other is refused."""
@@ -94,3 +116,7 @@ def data_dir():
 
 MAX_BODY_BYTES = 256 * 1024
 UPSTREAM_TIMEOUT_S = 20
+# The server is bound to every interface and answers the internet (through a tunnel, but nothing here relies on that):
+SOCKET_TIMEOUT_S = 30                  # a connection that stops sending is dropped; without it each one holds a thread for ever
+MAX_CONNECTIONS = 256                  # connections served at once; past this a new one is closed, never queued without bound
+MAX_UPSTREAM_BYTES = 8 * 1024 * 1024   # the largest answer read from the app (its Solana catalog is about 1.2 MB)

@@ -18,6 +18,7 @@ Failures are typed, because they mean different things to the person:
   NotConnected  the credential is unknown, expired, revoked or for another server -> sign in
   MissingScope  the person did not allow this                                     -> ask again
   Busy          this connection is over its limit                                 -> wait
+  Refused       Hence answered, and the answer was no (private, not ready, ...)   -> say why
   Unavailable   Hence did not answer                                              -> try again
 An unanswered check is never treated as "not connected": that would make the agent throw away
 a good credential and send the person through sign-in again for nothing.
@@ -25,10 +26,12 @@ a good credential and send the person through sign-in again for nothing.
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from . import config
@@ -36,7 +39,26 @@ from . import config
 INTROSPECT = '/api/agents/v1/introspect'
 # Every path this module may read under a connection. A new signed-in tool adds its path here,
 # and tests/test_tools.py pins the list: this server can reach nothing it was not given.
-ACCOUNT_PATHS = ('/api/agents/v1/whoami',)
+ACCOUNT_PATHS = ('/api/agents/v1/whoami', '/api/agents/v1/theses', '/api/agents/v1/portfolio', '/api/agents/v1/research',
+                 '/api/agents/v1/trades/proposals')
+_ID = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+ACCOUNT_PATTERNS = (re.compile(r'^/api/agents/v1/theses/%s(/performance)?$' % _ID), re.compile(r'^/api/agents/v1/research/%s$' % _ID),
+                    re.compile(r'^/api/agents/v1/trades/proposals/pr_[A-Za-z0-9_-]{22}$'))
+# The only things this server may SEND under a connection: a thesis the agent wrote, to be
+# checked, or put in the person's library as a private draft (the person saves it themselves);
+# and a request for Hence to research an idea, which is the person's own research run under
+# their own daily limit; and a trade PREPARED for the person: a market, a side and a size that
+# Hence stores as words and that fill in the person's own order ticket when they open it. None
+# of them publishes on the agent's say-so, and none places an order or moves money: the person
+# reviews and signs every trade in Hence, with their own wallet.
+WRITE_PATHS = ('/api/agents/v1/theses/check', '/api/agents/v1/theses/drafts', '/api/agents/v1/research',
+               '/api/agents/v1/trades/proposals')
+# what Hence may answer "no" with, in words meant for the person's agent
+REFUSALS = (400, 403, 404, 409, 413, 422)
+
+
+def allowed(path):
+    return isinstance(path, str) and (path in ACCOUNT_PATHS or any(p.match(path) for p in ACCOUNT_PATTERNS))
 
 CACHE_S = 60          # how long "this token is good" is remembered; the app re-checks the connection on every read anyway
 MAX_CACHED = 10000
@@ -58,6 +80,16 @@ class Busy(Exception):
         self.retry_after = retry_after
 
 
+class Refused(Exception):
+    """Hence read the request and declined it: the thesis is private or gone, is still being
+    built, has no price history yet, or theses are not open to this account. `str()` is Hence's
+    own sentence. It is an answer, not an outage: retrying will say the same thing."""
+
+    def __init__(self, status, code, message):
+        super().__init__(message)
+        self.status, self.code = status, code
+
+
 class Unavailable(Exception):
     pass
 
@@ -72,11 +104,23 @@ def sign(secret, method, path, grant, body, stamp=None, nonce=None):
             'X-Hence-Agent-Signature': hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()}
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect is an answer, never followed: urllib would re-send the request's headers (the person's
+    credential, or this server's signature) to wherever the Location points, another host or plain http included."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def _send(url, method, headers, body, timeout):
-    """-> (status, body bytes, response headers). Raises OSError family on transport failure."""
+    """-> (status, body bytes, response headers). Raises OSError family on transport failure. A redirect
+    comes back as its own 3xx status: it is never followed."""
     req = urllib.request.Request(url, data=body, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _OPENER.open(req, timeout=timeout) as r:
             return r.status, r.read(), dict(r.headers.items())
     except urllib.error.HTTPError as e:
         return e.code, (e.read() if hasattr(e, 'read') else b''), dict(e.headers.items() if e.headers else {})
@@ -150,11 +194,24 @@ class AppAuth:
             with self._lock:
                 self._cache.pop(hashlib.sha256(token.encode('utf-8')).hexdigest(), None)
 
-    def get(self, grant, path):
-        """Read `path` under a connection. Only paths in ACCOUNT_PATHS can be asked for."""
-        if path not in ACCOUNT_PATHS:
+    def post(self, grant, path, payload):
+        """Send `payload` under a connection. Only the paths in WRITE_PATHS can be sent to. The
+        body is part of what is signed."""
+        if path not in WRITE_PATHS:
+            raise ValueError('not a path this server may send to')
+        body = json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode()
+        return self._answer(*self._call('POST', path, grant, body))
+
+    def get(self, grant, path, query=None):
+        """Read `path` under a connection. Only the paths listed above can be asked for. The
+        query is part of what is signed: the app verifies the whole request target."""
+        if not allowed(path):
             raise ValueError('not an account path')
-        status, data, headers = self._call('GET', path, grant, None)
+        target = path + ('?' + urllib.parse.urlencode([(k, str(v)) for k, v in query.items()]) if query else '')
+        return self._answer(*self._call('GET', target, grant, None))
+
+    @staticmethod
+    def _answer(status, data, headers):
         error = (data or {}).get('error')
         if status == 200 and data is not None:
             return data
@@ -165,4 +222,7 @@ class AppAuth:
         if status == 429:
             retry = next((v for k, v in headers.items() if k.lower() == 'retry-after'), '')
             raise Busy(retry if str(retry).isdigit() else '60')
+        said = (data or {}).get('error_description')
+        if status in REFUSALS and isinstance(error, str) and isinstance(said, str) and said.strip():
+            raise Refused(status, error, said.strip()[:400])
         raise Unavailable('Hence answered %s' % status)

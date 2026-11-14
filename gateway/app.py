@@ -6,6 +6,8 @@
   GET|DELETE /mcp -> 405 (no streams, no sessions: see protocol.py)
 """
 import json
+import re
+import threading
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
@@ -35,10 +37,16 @@ def _origin_allowed(origin):
     return host in ('localhost', '127.0.0.1', '::1')
 
 
+_LENGTH = re.compile(r'^[0-9]{1,9}$')
+
+
 def make_handler(upstream, limiter, auth=None):
     class Handler(BaseHTTPRequestHandler):
         server_version = 'HenceMCP/' + config.VERSION
         protocol_version = 'HTTP/1.1'
+        # A read timeout on every connection. Without one, a client that opens a connection and sends half
+        # a header (or holds an idle keep-alive) holds its thread for ever, and enough of them hold them all.
+        timeout = config.SOCKET_TIMEOUT_S
 
         def log_message(self, *a):  # request lines stay out of the logs; tool outcomes go in
             pass
@@ -99,10 +107,15 @@ def make_handler(upstream, limiter, auth=None):
                 return self._send(404, {'error': 'not found'})
             if not _origin_allowed(self.headers.get('Origin')):
                 return self._send(403, protocol._error(None, protocol.INVALID_REQUEST, 'This origin may not call the endpoint.'))
-            try:
-                length = int(self.headers.get('Content-Length') or 0)
-            except ValueError:
-                length = -1
+            # The body is exactly Content-Length bytes and nothing else. A chunked body is refused, not ignored:
+            # this server does not decode it, so its bytes would stay on the connection and be read as the NEXT
+            # request (a proxy that pools connections would then pair one caller's bytes with another's request).
+            if self.headers.get('Transfer-Encoding'):
+                self.close_connection = True
+                return self._send(411, protocol._error(None, protocol.INVALID_REQUEST, 'Send the request with a Content-Length.'))
+            declared = (self.headers.get('Content-Length') or '').strip()
+            # plain ASCII digits only: int() also takes "1_0", " +5" and digits of other scripts
+            length = int(declared) if _LENGTH.match(declared) else (0 if not declared else -1)
             if length < 0 or length > config.MAX_BODY_BYTES:
                 self.close_connection = True  # the unread body would poison the next request on this connection
                 return self._send(413, protocol._error(None, protocol.INVALID_REQUEST, 'The request is too large.'))
@@ -120,6 +133,27 @@ def make_handler(upstream, limiter, auth=None):
 class Server(ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 128  # a hosted assistant opens many connections at once
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # one thread per connection, so connections are counted: past the limit a new one is closed at once
+        self._slots = threading.BoundedSemaphore(config.MAX_CONNECTIONS)
+
+    def process_request(self, request, client_address):
+        if not self._slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
 
 
 def make_server(host=None, port=None, upstream=None, limiter=None, auth=None):

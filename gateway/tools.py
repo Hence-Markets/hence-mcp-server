@@ -12,8 +12,10 @@ and a model picks better among four clear tools than among forty thin ones.
 import base64
 import json
 import os
+import re
 
 from . import config, shape
+from . import appauth
 from .upstream import Expired, NotFound, Unavailable
 
 WORKSPACE = '/api/thesis-workspace'
@@ -82,7 +84,7 @@ def _cursor_pack(snapshot, offset, filters):
     return base64.urlsafe_b64encode(raw).decode().rstrip('=')
 
 
-def _cursor_unpack(cursor):
+def _cursor_unpack(cursor, keys=('q', 'sort', 'venue')):
     try:
         raw = base64.urlsafe_b64decode(cursor + '=' * (-len(cursor) % 4))
         c = json.loads(raw.decode())
@@ -90,7 +92,7 @@ def _cursor_unpack(cursor):
         if not (isinstance(s, str) and 0 < len(s) <= 64 and isinstance(o, int) and not isinstance(o, bool)
                 and 0 <= o <= 100000 and isinstance(f, dict)
                 and all(isinstance(k, str) and isinstance(v, str) and len(v) <= 200 for k, v in f.items())
-                and set(f) <= {'q', 'sort', 'venue'}):
+                and set(f) <= set(keys)):
             raise ValueError
         return s, o, f
     except Exception:
@@ -273,8 +275,10 @@ SEARCH_MARKETS = {
     'additionalProperties': False,
     'properties': {
         'query': {'type': 'string', 'maxLength': 64,
-                  'description': 'A ticker or name, e.g. "NVDA", "bitcoin", "OpenAI". Leave out for the most traded perps.'},
-        'kind': {'type': 'string', 'enum': ['all', 'perp', 'spot'], 'default': 'all'},
+                  'description': 'A ticker or name, e.g. "NVDA", "bitcoin", "OpenAI", or words from an outcome market\'s question, '
+                                 'e.g. "fed", "election". Leave out for the most traded perps.'},
+        'kind': {'type': 'string', 'enum': ['all', 'perp', 'spot', 'outcome'], 'default': 'all',
+                 'description': '"outcome" lists outcome (event) markets on Hyperliquid: one row per side, each its own contract.'},
         'limit': {'type': 'integer', 'minimum': 1, 'maximum': 25, 'default': 10},
     },
 }
@@ -299,15 +303,43 @@ def _display_names():
     return _NAMES
 
 
+def _outcome_events(up, settled_too=False):
+    """Hence's own list of outcome markets (the Predictions page's): the events, or Unavailable.
+    Without `settled_too` it holds only what can still be traded."""
+    data = up.get_json('/api/hip4/events', {'all': '1'} if settled_too else None, ttl=15)
+    events = data.get('events') if isinstance(data, dict) and data.get('ok') is True else None
+    if not isinstance(events, list):
+        raise Unavailable('Hence gave an answer that could not be read')
+    return events
+
+
+def _solana_offered(up):
+    """Does this Hence serve its Solana catalog at all? From the app's public config. False
+    only when the app SAYS it does not: a config that could not be read is not "off", so a
+    Solana read that failed is still reported as a failed read."""
+    try:
+        cfg = up.get_json('/api/config', ttl=300)
+    except (Unavailable, NotFound, Expired):
+        return True
+    return not (isinstance(cfg, dict) and cfg.get('solanaSpot') is False and cfg.get('solanaResearch') is False)
+
+
+# what each list is called when it could not be read: "spot could not be read" beside Solana spot
+# rows read as a contradiction, when the list that failed was Robinhood Chain's
+_LISTS = {'perp': 'perps', 'spot': 'Robinhood Chain spot', 'solana': 'Solana spot', 'outcome': 'outcome markets'}
+
+
 def search_markets(args, up):
     _unknown_keys(args, SEARCH_MARKETS)
     query = _string(args, 'query', 64)
-    kind = _choice(args, 'kind', ('all', 'perp', 'spot'), 'all')
+    kind = _choice(args, 'kind', ('all', 'perp', 'spot', 'outcome'), 'all')
     limit = _integer(args, 'limit', 1, 25, 10)
     base = config.public_base()
     names = _display_names()
     found, failed, as_of = [], {}, None
+    asked = []                       # the lists this search actually read, so "every one failed" is judged against those
     if kind in ('all', 'perp'):
+        asked.append('perp')
         try:
             data = up.get_json('/api/screener/hl', ttl=30)
             rows = data.get('rows') if isinstance(data, dict) else None
@@ -317,7 +349,11 @@ def search_markets(args, up):
             for coin, row in rows.items():
                 if isinstance(coin, str) and isinstance(row, dict):
                     m = shape.perp_market(coin, row, names, base)
-                    score = shape.match_score(query, m['symbol'], m['name'])
+                    common = shape.core_name(coin)
+                    score = shape.match_score(query, m['symbol'], m['name'], shape.CORE_NAME_FLOOR if common else 0)
+                    if common and common != m['name']:
+                        # the app named it something else: its common name still finds it
+                        score = max(score, shape.match_score(query, m['symbol'], common, shape.CORE_NAME_FLOOR))
                     if score:
                         found.append((score, m['volume_24h_usd'] or 0, m))
         except (Unavailable, NotFound, Expired) as e:
@@ -325,38 +361,166 @@ def search_markets(args, up):
     if kind in ('all', 'spot') and (query or kind == 'spot'):
         # spot tokens are only listed for a search: without a query the perps' volume order
         # would bury them, and they carry no figure here to order by
+        asked.append('spot')
         try:
             data = up.get_json('/api/screener/spot', ttl=120)
             rows = data.get('rows') if isinstance(data, dict) else None
             if not isinstance(rows, list):
                 raise Unavailable('Hence gave an answer that could not be read')
             for row in rows:
-                m = shape.spot_market(row, base) if isinstance(row, dict) else None
+                m = shape.spot_market(row, base, config.spot_figures()) if isinstance(row, dict) else None
+                if m:
+                    score = shape.match_score(query, m['symbol'], m['name'])
+                    if score:
+                        found.append((score, m.get('volume_24h_usd') or 0, m))
+        except (Unavailable, NotFound, Expired) as e:
+            failed['spot'] = str(e) if isinstance(e, Unavailable) else 'not available'
+        # stocks and tokens on Solana, from the app's own catalog: one row per stock. Where this Hence
+        # does not serve Solana at all, that is not a failed read and nothing is said about it.
+        try:
+            data = up.get_json('/api/solana/assets', ttl=300)
+            assets = data.get('assets') if isinstance(data, dict) else None
+            if not isinstance(assets, list):
+                raise Unavailable('Hence gave an answer that could not be read')
+            asked.append('solana')
+            for asset in assets:
+                m = shape.solana_market(asset, base)
                 if m:
                     score = shape.match_score(query, m['symbol'], m['name'])
                     if score:
                         found.append((score, 0, m))
         except (Unavailable, NotFound, Expired) as e:
-            failed['spot'] = str(e) if isinstance(e, Unavailable) else 'not available'
-    wanted = [k for k in ('perp', 'spot') if kind in ('all', k)]
-    if failed and all(k in failed for k in wanted):
+            if _solana_offered(up):
+                asked.append('solana')
+                failed['solana'] = str(e) if isinstance(e, Unavailable) else 'not available'
+    if kind in ('all', 'outcome') and (query or kind == 'outcome'):
+        # like spot, outcome markets are listed for a search or when asked for by kind: they have
+        # no volume here to rank against the perps
+        asked.append('outcome')
+        try:
+            events = _outcome_events(up)
+            unquoted = shape.unquoted_mids(events)        # judged over the whole list, so every row of this answer is treated alike
+            for event in events:
+                for m in shape.outcome_markets(event, base, unquoted):
+                    score = shape.match_score(query, m['symbol'], m['name'])
+                    if score:
+                        found.append((score, 0, m))
+        except (Unavailable, NotFound, Expired) as e:
+            failed['outcome'] = str(e) if isinstance(e, Unavailable) else 'not available'
+    if failed and all(k in failed for k in asked):
         raise ToolError('Hence markets could not be read (%s). No markets were read; try again shortly.'
-                        % '; '.join('%s: %s' % kv for kv in sorted(failed.items())))
+                        % '; '.join('%s: %s' % (_LISTS[k], v) for k, v in sorted(failed.items())))
     found.sort(key=lambda t: (-t[0], -t[1], t[2]['market_id']))
     out = {
         'markets': [m for _, _, m in found[:limit]],
         'matches': len(found),
         'prices_as_of_unix': as_of,
-        'coverage': 'Perps on Hyperliquid and its builder venues, and spot tokens on Robinhood Chain. '
-                    'Solana and Elysium tokens and prediction markets are in the Hence app but not in this search yet.',
-        'how_to_trade': 'Open a market\'s url in Hence to trade it. This server cannot place trades.',
+        'coverage': 'Perps on Hyperliquid and its builder venues, spot tokens on Robinhood Chain, stocks and tokens on Solana where this Hence '
+                    'serves them (one row per stock), and outcome (event) markets on Hyperliquid. '
+                    'An outcome market is listed one row per side: each side is its own contract, bought and never shorted. '
+                    'Elysium tokens and Polymarket are in the Hence app but not in this search yet.',
+        'how_to_trade': 'Open a market\'s url in Hence to trade it. This server cannot place trades.'
+                        + (' It can prepare ONE order for the person to review and sign in Hence (propose_trade): a perpetual, a purchase of a '
+                           'Robinhood Chain token or of a stock on Solana, or a purchase of one side of an outcome market.' if config.trades_active() else ''),
     }
     if failed:
         # one of the two lists did not answer: say so, or a missing market reads as "not listed"
-        out['incomplete'] = 'Not all markets were searched: %s could not be read.' % ' and '.join(sorted(failed))
+        out['incomplete'] = 'Not all markets were searched: %s could not be read.' % ' and '.join(_LISTS[k] for k in sorted(failed))
+    if kind == 'all' and not query:
+        out['not_listed_here'] = 'Without a query only perps are listed. Search by name, or ask for kind "spot" or "outcome".'
     return out
 
 
+GET_ASSET = {
+    'type': 'object',
+    'additionalProperties': False,
+    'required': ['id'],
+    'properties': {
+        'id': {'type': 'string', 'maxLength': 80,
+               'description': 'A perpetual\'s market_id from search_markets ("perp:xyz:NVDA", "perp:BTC"), one side of an outcome market '
+                              '("hip4:1212:0"), or a plain ticker ("NVDA"). A US-listed company that Hence does not trade can be looked up by its '
+                              'ticker; write "ALT.US" for a company whose ticker is also a crypto.'},
+        'sections': {'type': 'array', 'maxItems': 9, 'items': {'type': 'string', 'enum': list(shape.ASSET_SECTIONS)},
+                     'description': 'What to read. Left out: quote, history and profile. analysts, insiders, earnings, news and fundamentals are for '
+                                    'companies; analysis is Hence\'s own daily report, when one exists.'},
+    },
+}
+_ASSET_ID = re.compile(r'^(perp:(?:[a-z0-9]{1,12}:)?[A-Za-z0-9._/-]{1,40}|[A-Za-z0-9.\-]{1,12})$')
+
+
+def get_asset(args, up):
+    _unknown_keys(args, GET_ASSET)
+    asset_id = _string(args, 'id', 80)
+    outcome = bool(shape.OUTCOME_ID_RE.match(asset_id))
+    if not outcome and not _ASSET_ID.match(asset_id):
+        raise ToolError('`id` is a market_id from search_markets (perp:xyz:NVDA, hip4:1212:0) or a plain ticker (NVDA).')
+    sections = args.get('sections')
+    if sections is not None and (not isinstance(sections, list) or any(s not in shape.ASSET_SECTIONS for s in sections)):
+        raise ToolError('`sections` is a list of: %s.' % ', '.join(shape.ASSET_SECTIONS))
+    if outcome:
+        return _outcome_asset(asset_id, sections, up)
+    # asked in the answer's own order, so the same request is always the same address (and the same cached answer)
+    query = {'id': asset_id, 'sections': ','.join(s for s in shape.ASSET_SECTIONS if s in set(sections or []))}
+    try:
+        data = up.get_json('/api/research/asset', query, ttl=120)
+    except (NotFound, Expired):
+        raise ToolError('Hence has no market and no research data for "%s". Find a market with search_markets, or check the ticker.' % asset_id)
+    except Unavailable as e:
+        raise ToolError('%s. The asset was not read; try again shortly.' % e)
+    out = shape.asset_research(data, config.public_base(), list(sections) if sections else list(DEFAULT_ASSET_SECTIONS))
+    if out is None:
+        raise ToolError('Hence gave an answer that could not be read. The asset was not read.')
+    return out
+
+
+def _outcome_asset(market_id, sections, up):
+    """One side of an outcome market, from the app's own public reads for the Predictions page:
+    its event (settled ones too, so a market that has closed reads as closed) and the side's
+    daily closes. The price line is optional: when that read fails the answer says history is
+    unavailable and still carries the market."""
+    asked = set(sections) if sections else set(DEFAULT_ASSET_SECTIONS)
+    try:
+        events = _outcome_events(up, settled_too=True)
+    except (NotFound, Expired):
+        raise ToolError('Hence has no outcome market "%s". Find one with search_markets, kind "outcome".' % market_id)
+    except Unavailable as e:
+        raise ToolError('%s. The market was not read; try again shortly.' % e)
+    m = shape.OUTCOME_ID_RE.match(market_id)
+    outcome, side = int(m.group(1)), int(m.group(2))
+    coin = lambda s: '#%d' % (outcome * 10 + s)              # the side's own coin, as the venue names it
+    history = False
+    if 'history' in asked:
+        try:
+            data = up.get_json('/api/hip4/history', {'coin': coin(side), 'tf': '1d', 'hours': '720'}, ttl=300)
+            history = data.get('points') if isinstance(data, dict) and data.get('ok') is True else None
+        except (Unavailable, NotFound, Expired):
+            history = None                                   # unread: the answer lists it as unavailable, never as an empty line
+    books = None
+    if 'quote' in asked and _is_open(events, outcome):
+        # each side's own order book. The event list's figure is not used for a price: for a book
+        # nobody quotes it is the middle of an empty book, and it was shown as a probability.
+        books = {}
+        for s in (side, 1 - side):
+            try:
+                books[s] = shape.book_quote(up.get_json('/api/hip4/quote', {'coin': coin(s)}, ttl=5), coin(s))
+            except (Unavailable, NotFound, Expired):
+                books[s] = None                              # unread: no price, and the answer says the book was not read
+    out = shape.outcome_asset(market_id, events, history, asked, config.public_base(), books)
+    if out is None:
+        raise ToolError('Hence has no outcome market "%s". Find one with search_markets, kind "outcome".' % market_id)
+    return out
+
+
+def _is_open(events, outcome):
+    """Is the event holding this outcome listed as open? Only an open market's book is read."""
+    for ev in events:
+        if isinstance(ev, dict) and shape.EVENT_RE.match(str(ev.get('id') or '')) and shape.text(ev.get('title')) \
+                and any(row[0] == outcome for row in shape.outcome_rows(ev)):
+            return ev.get('settled') is False
+    return False
+
+
+DEFAULT_ASSET_SECTIONS = ('quote', 'history', 'profile')       # what the app reads when `sections` is left out
 ACCOUNT = {'type': 'object', 'additionalProperties': False, 'properties': {}}
 
 
@@ -372,21 +536,407 @@ def get_my_account(args, up, account):
         'username': handle,
         'profile_url': shape.text(data.get('profile_url')) if handle else None,
         'connected_agent': shape.text(data.get('agent')),
-        'allowed': [s for s in allowed if isinstance(s, str)] if isinstance(allowed, list) else [],
+        # what the app did not say is unknown (null), never "nothing is allowed"
+        'allowed': [s for s in allowed if isinstance(s, str)] if isinstance(allowed, list) else None,
         # null here is a fact (the app read the account and it has no username); a failed read never gets this far
         'note': None if handle else 'This Hence account has not claimed a username yet.',
     }
 
 
-def _tool(name, title, description, schema, handler, scope=None):
+# ── the person's own theses and portfolio ─────────────────────────────────────────────────────
+# These read the connected person's account through the app's signed surface (appauth). The app
+# decides whose data it is from the connection; nothing here names an account or a wallet.
+
+WHICH = ('created', 'saved', 'following', 'paper', 'archived', 'all')
+
+LIST_MY_THESES = {
+    'type': 'object',
+    'additionalProperties': False,
+    'properties': {
+        'which': {'type': 'string', 'enum': list(WHICH), 'default': 'created',
+                  'description': 'created: theses the person wrote (default). saved, following, paper (held on paper), archived, '
+                                 'or all of the non-archived ones together.'},
+        'limit': {'type': 'integer', 'minimum': 1, 'maximum': 12, 'default': 10},
+        'cursor': {'type': 'string', 'maxLength': 600, 'description': 'next_cursor from the previous page of the same list.'},
+    },
+}
+
+
+def _account_dict(data, what):
+    if not isinstance(data, dict):
+        raise appauth.Unavailable('Hence gave an answer that could not be read (%s)' % what)
+    return data
+
+
+def list_my_theses(args, up, account):
+    _unknown_keys(args, LIST_MY_THESES)
+    which = _choice(args, 'which', WHICH, 'created')
+    limit = _integer(args, 'limit', 1, 12, 10)
+    cursor = _string(args, 'cursor', 600)
+    query = {'filter': which, 'limit': limit}
+    if cursor:
+        snapshot, offset, made_with = _cursor_unpack(cursor, keys=('which',))
+        if made_with.get('which') != which:
+            raise ToolError('That `cursor` belongs to a different list. Ask again without it.')
+        query.update(snapshot=snapshot, offset=offset)
+    data = _account_dict(account.get('/api/agents/v1/theses', query), 'theses')
+    rows = data.get('theses')
+    if not isinstance(rows, list):
+        raise appauth.Unavailable('Hence gave an answer that could not be read (theses)')
+    base = config.public_base()
+    out = {'theses': [shape.my_thesis_card(r, base) for r in rows if isinstance(r, dict)], 'which': which,
+           'total': shape.num(data.get('total')), 'next_cursor': None, 'note': shape.DISCLAIMER}
+    snapshot, nxt = data.get('snapshot'), data.get('next_offset')
+    if isinstance(snapshot, str) and snapshot and isinstance(nxt, int) and not isinstance(nxt, bool):
+        out['next_cursor'] = _cursor_pack(snapshot, nxt, {'which': which})
+    unread = shape.num(data.get('unread'))
+    if unread:
+        # the page is short because rows could not be read, not because the list ended
+        out['unread_count'] = unread
+        out['unread_note'] = '%d theses on this page could not be read and are missing from it. The list is not complete.' % unread
+    return out
+
+
+GET_MY_THESIS = {
+    'type': 'object',
+    'additionalProperties': False,
+    'required': ['thesis_id'],
+    'properties': {
+        'thesis_id': {'type': 'string', 'description': 'The thesis id, from list_my_theses.'},
+        'period_days': {'type': 'integer', 'enum': [30, 90, 180, 365], 'default': 90},
+        'include_performance': {'type': 'boolean', 'default': True},
+        'include_paper': {'type': 'boolean', 'default': False},
+    },
+}
+
+
+def get_my_thesis(args, up, account):
+    _unknown_keys(args, GET_MY_THESIS)
+    thesis_id = _string(args, 'thesis_id', 64).lower()
+    if not shape.UUID_RE.match(thesis_id):
+        raise ToolError('`thesis_id` is not a thesis id. Use one from list_my_theses.')
+    days = _choice(args, 'period_days', (30, 90, 180, 365), 90)
+    want_perf = _boolean(args, 'include_performance', True)
+    path = '/api/agents/v1/theses/' + thesis_id
+    detail = _account_dict(account.get(path), 'thesis')
+    if not isinstance(detail.get('body'), dict):
+        raise appauth.Unavailable('Hence gave an answer that could not be read (thesis)')
+    base = config.public_base()
+    out = shape.thesis_detail(detail, base, with_paper=_boolean(args, 'include_paper', False))
+    out.update(shape.ownership(detail))
+    out['versions'] = [{'version': shape.num(v.get('version')), 'recorded_at': shape.text(v.get('created_at')),
+                        'change': shape.text(v.get('change_reason'), 300)}
+                       for v in (detail.get('versions') if isinstance(detail.get('versions'), list) else [])[:20] if isinstance(v, dict)]
+    out['note'] = shape.DISCLAIMER
+    out['how_to_trade'] = 'Open the url in Hence to review and buy this basket. This server cannot place trades.'
+    if want_perf:
+        # A second read. If it fails, or Hence says there is no history yet, the thesis is still
+        # worth returning; the result says the figures are missing rather than leaving them out.
+        try:
+            perf = shape.performance(_account_dict(account.get(path + '/performance', {'days': days}), 'price history'), days)
+            if perf is None:
+                raise appauth.Unavailable('Hence gave an answer that could not be read')
+            out['performance'] = perf
+        except (appauth.Unavailable, appauth.Refused, appauth.Busy) as e:
+            out['performance'] = None
+            out['performance_unavailable'] = 'The price history could not be read (%s). Do not state a return for this thesis.' % (
+                e if isinstance(e, appauth.Refused) else 'try again shortly')
+    return out
+
+
+GET_MY_PORTFOLIO = {
+    'type': 'object',
+    'additionalProperties': False,
+    'properties': {
+        'history_days': {'type': 'integer', 'minimum': 1, 'maximum': 365, 'default': 30,
+                         'description': 'The window for the per-market trading results.'},
+        'include_spot': {'type': 'boolean', 'default': False,
+                         'description': 'Also read Robinhood Chain tokens and wallet stablecoins. Slower and costlier (read on-chain for every wallet): '
+                                        'ask only when the person wants their spot balances.'},
+    },
+}
+
+
+def get_my_portfolio(args, up, account):
+    """The person's open perpetual positions, recorded trading results and last recorded account
+    value, as the Hence app answers them. Nothing is recomputed here: an unread section stays
+    null and named, and `not_included` travels with every answer."""
+    _unknown_keys(args, GET_MY_PORTFOLIO)
+    days = _integer(args, 'history_days', 1, 365, 30)
+    query = {'days': days}
+    if _boolean(args, 'include_spot', False):
+        query['include'] = 'spot'
+    data = _account_dict(account.get('/api/agents/v1/portfolio', query), 'portfolio')
+    out = shape.portfolio(data)
+    if out is None:
+        raise appauth.Unavailable('Hence gave an answer that could not be read (portfolio)')
+    return out
+
+
+# ── a thesis the agent writes itself ──────────────────────────────────────────────────────────
+# The agent does the thinking, with its own model and sources, and hands Hence a thesis in the
+# format below. Hence checks it against its own listings and, if the person agrees, puts it in
+# their library as a private draft. The person opens it in Hence and saves it themselves: that
+# save, not anything here, is what makes it a thesis. Hence's research pipeline is not involved
+# and nothing here is labelled as Hence research.
+
+THESIS_FORMAT = 'hence-thesis/1'
+THESIS = {
+    'type': 'object',
+    'description': 'A thesis in the %s format. Read get_thesis_guide before writing one.' % THESIS_FORMAT,
+    'required': ['format', 'title', 'summary', 'mechanism', 'why_now', 'counter_case', 'invalidation', 'horizon_days', 'holdings'],
+    'properties': {
+        'format': {'type': 'string', 'enum': [THESIS_FORMAT]},
+        'title': {'type': 'string', 'maxLength': 180},
+        'summary': {'type': 'string', 'maxLength': 1000},
+        'mechanism': {'type': 'string', 'maxLength': 4000},
+        'why_now': {'type': 'string', 'maxLength': 2000},
+        'counter_case': {'type': 'string', 'maxLength': 2000},
+        'invalidation': {'type': 'string', 'maxLength': 2000},
+        'horizon_days': {'type': 'integer', 'minimum': 1, 'maximum': 10950},
+        'topic': {'type': 'string', 'maxLength': 80},
+        'cash_weight_pct': {'type': 'number', 'minimum': 0, 'exclusiveMaximum': 100},
+        'holdings': {'type': 'array', 'minItems': 1, 'maxItems': 20, 'items': {
+            'type': 'object', 'required': ['market_id', 'side', 'weight_pct', 'role', 'reason'], 'properties': {
+                'market_id': {'type': 'string', 'description': 'Exactly as search_markets returned it.'},
+                'side': {'type': 'string', 'enum': ['long', 'short']},
+                'weight_pct': {'type': 'number', 'exclusiveMinimum': 0, 'maximum': 100},
+                'role': {'type': 'string', 'enum': ['core', 'second_order', 'hedge']},
+                'reason': {'type': 'string', 'maxLength': 1000}}}},
+        'sources': {'type': 'array', 'maxItems': 30, 'items': {
+            'type': 'object', 'required': ['title', 'url'], 'properties': {
+                'title': {'type': 'string'}, 'url': {'type': 'string'}, 'publisher': {'type': 'string'},
+                'published_at': {'type': 'string', 'description': 'YYYY-MM-DD'}}}},
+        'checkpoints': {'type': 'array', 'maxItems': 5, 'items': {
+            'type': 'object', 'required': ['by', 'observable', 'direction'], 'properties': {
+                'by': {'type': 'string', 'description': 'YYYY-MM-DD, after today and within 12 months'},
+                'observable': {'type': 'string', 'maxLength': 300},
+                'direction': {'type': 'string', 'enum': ['supports', 'contradicts']}}}},
+    },
+}
+GUIDE = {'type': 'object', 'additionalProperties': False, 'properties': {}}
+CHECK_THESIS = {'type': 'object', 'additionalProperties': False, 'required': ['thesis'], 'properties': {'thesis': THESIS}}
+SAVE_THESIS = {'type': 'object', 'additionalProperties': False, 'required': ['thesis'], 'properties': {
+    'thesis': {'type': 'object', 'description': 'The same object check_thesis accepted, unchanged.'}}}
+
+_GUIDE = None
+
+
+def _guide_text():
+    """data/write-a-thesis.md, read once. The same file ships in the skill (tests pin that the
+    two copies are identical), so an agent reads one method whichever way it arrives."""
+    global _GUIDE
+    if _GUIDE is None:
+        with open(os.path.join(config.data_dir(), 'write-a-thesis.md'), encoding='utf-8') as f:
+            _GUIDE = f.read()
+    return _GUIDE
+
+
+def get_thesis_guide(args, up):
+    _unknown_keys(args, GUIDE)
+    try:
+        guide = _guide_text()
+    except OSError:
+        raise ToolError('The guide could not be read on this server. Nothing else is affected.')
+    return {'format': THESIS_FORMAT, 'guide': guide,
+            'steps': ['search_markets for every holding and copy its market_id', 'check_thesis until it has no problems',
+                      'show the person the thesis and ask', 'save_thesis_draft', 'give the person the url'],
+            'note': 'A thesis you write is yours, not Hence research. Hence checks it and stores it as a private draft; '
+                    'the person reviews it in Hence and saves it there. Nothing here places a trade.'}
+
+
+def _thesis_arg(args, schema):
+    _unknown_keys(args, schema)
+    thesis = args.get('thesis')
+    if not isinstance(thesis, dict):
+        raise ToolError('`thesis` must be an object in the %s format. Read get_thesis_guide first.' % THESIS_FORMAT)
+    return thesis
+
+
+def check_thesis(args, up, account):
+    """Hence's verdict on a thesis the agent wrote. Saves nothing."""
+    out = shape.thesis_check(account.post('/api/agents/v1/theses/check', _thesis_arg(args, CHECK_THESIS)))
+    if out is None:
+        raise appauth.Unavailable('Hence gave an answer that could not be read (thesis check)')
+    return out
+
+
+def save_thesis_draft(args, up, account):
+    """Put the thesis in the person's Hence library as a private draft. It is checked again
+    first; a thesis with problems is not saved."""
+    out = shape.thesis_check(account.post('/api/agents/v1/theses/drafts', _thesis_arg(args, SAVE_THESIS)))
+    if out is None:
+        raise appauth.Unavailable('Hence gave an answer that could not be read (thesis draft)')
+    return out
+
+
+# ── Hence's own research, started for the person ────────────────────────────────────────────
+# The 20 to 40 minute build the app runs when a person types an idea. It is the person's run,
+# counted against their daily limit, and the one tool here that spends Hence's money: it is
+# offered only when its own switch is on (config.research_active).
+
+START_RESEARCH = {
+    'type': 'object',
+    'additionalProperties': False,
+    'required': ['belief'],
+    'properties': {
+        'belief': {'type': 'string', 'minLength': 2, 'maxLength': 6000,
+                   'description': 'The idea to research, in the person\'s own words where possible.'},
+        'guidance': {'type': 'string', 'maxLength': 2000,
+                     'description': 'How the person wants it built: constraints, what to emphasise, what to avoid.'},
+        'must_include': {'type': 'array', 'maxItems': 12, 'items': {'type': 'string'},
+                         'description': 'market_ids (from search_markets) that must be in the basket.'},
+        'exclude': {'type': 'array', 'maxItems': 12, 'items': {'type': 'string'},
+                    'description': 'market_ids (from search_markets) that must not be in the basket.'},
+        'basket': {'type': 'string', 'enum': ['perps', 'spot'], 'description': 'Where to build it. Leave out and Hence picks.'},
+    },
+}
+GET_RESEARCH = {
+    'type': 'object',
+    'additionalProperties': False,
+    'properties': {'run_id': {'type': 'string', 'description': 'From start_thesis_research. Leave out to list what is in progress and what recently finished.'}},
+}
+
+
+def start_thesis_research(args, up, account):
+    _unknown_keys(args, START_RESEARCH)
+    out = shape.research_start(account.post('/api/agents/v1/research', args))
+    if out is None:
+        raise appauth.Unavailable('Hence gave an answer that could not be read (research). Ask again: the same request reaches the same run')
+    return out
+
+
+def get_thesis_research(args, up, account):
+    _unknown_keys(args, GET_RESEARCH)
+    run_id = _string(args, 'run_id', 64).lower()
+    if not run_id:
+        out = shape.research_list(account.get('/api/agents/v1/research'))
+    elif not shape.UUID_RE.match(run_id):
+        raise ToolError('`run_id` is not a research run id. Use the one start_thesis_research returned.')
+    else:
+        out = shape.research_run(account.get('/api/agents/v1/research/' + run_id))
+    if out is None:
+        raise appauth.Unavailable('Hence gave an answer that could not be read (research)')
+    return out
+
+
+# ── a trade prepared for the person to review and sign in Hence ─────────────────────────────
+# "Propose, I approve". The agent says what the trade is; Hence stores it as words; the person
+# opens it in Hence, their own order ticket is filled in, and they review and sign it with
+# their own wallet. No tool here places an order, and none could: this server holds no wallet,
+# no key and no route to a venue. Offered only when its own switch is on (config.trades_active).
+
+PROPOSE_TRADE = {
+    'type': 'object',
+    'additionalProperties': False,
+    'required': ['market_id', 'side', 'size_usd'],
+    'properties': {
+        'market_id': {'type': 'string', 'maxLength': 80,
+                      'description': 'Exactly as search_markets returned it. A perpetual (perp:BTC, perp:xyz:NVDA); a Robinhood Chain token to buy '
+                                     '(spot:4663:0x…); a stock or token on Solana to buy (spot:solana:<mint>, the mint exactly as written: it is '
+                                     'case-sensitive); or one side of an outcome market to buy (hip4:1212:0). Elysium tokens and Polymarket '
+                                     'cannot be proposed yet.'},
+        'side': {'type': 'string', 'enum': ['long', 'short'],
+                 'description': 'A perpetual is long or short. A spot token or an outcome contract is only "long" (a purchase): to take the other '
+                                'side of an outcome market, propose its other side (the row\'s other_side).'},
+        'size_usd': {'type': 'number', 'minimum': 10, 'maximum': 100000,
+                     'description': 'For a perpetual, the position\'s value in US dollars: the size of the position, not the margin (at 3x leverage a '
+                                    '300 position needs about 100 of margin). For a spot token or an outcome contract, the US dollars to spend.'},
+        'leverage': {'type': 'integer', 'minimum': 1, 'maximum': 50,
+                     'description': 'Perpetuals only. Leave out to keep the person\'s own setting for the market. The ticket lowers it to the market\'s maximum.'},
+        'order_type': {'type': 'string', 'enum': ['market', 'limit'], 'description': 'Perpetuals only. Leave out for a market order.'},
+        'limit_price': {'type': 'number', 'exclusiveMinimum': 0, 'description': 'Perpetuals only. Required for a limit order; leave out for a market order.'},
+        'note': {'type': 'string', 'maxLength': 280, 'description': 'Why, in one or two sentences. The person sees it in Hence, marked as your words.'},
+        'valid_for_hours': {'type': 'integer', 'minimum': 1, 'maximum': 72, 'description': 'How long the person has to act on it. Leave out for 24.'},
+    },
+}
+PROPOSE_BASKET = {
+    'type': 'object',
+    'additionalProperties': False,
+    'required': ['thesis_id', 'amount_usd'],
+    'properties': {
+        'thesis_id': {'type': 'string', 'description': 'A thesis the person can open: one of theirs (list_my_theses) or a public one (search_theses).'},
+        'amount_usd': {'type': 'number', 'minimum': 10, 'maximum': 100000,
+                       'description': 'The money put into the basket, in US dollars and whole cents. With leverage the positions are worth more than this.'},
+        'basket': {'type': 'string', 'enum': ['perps', 'spot'], 'description': 'Which of the thesis\'s baskets. Leave out and the thesis opens on its own.'},
+        'leverage': {'type': 'integer', 'minimum': 1, 'maximum': 20, 'description': 'Perpetual baskets only. Leave out for none. The ticket lowers it to what the basket\'s markets allow.'},
+        'note': {'type': 'string', 'maxLength': 280, 'description': 'Why, in one or two sentences. The person sees it in Hence, marked as your words.'},
+        'valid_for_hours': {'type': 'integer', 'minimum': 1, 'maximum': 72, 'description': 'How long the person has to act on it. Leave out for 24.'},
+    },
+}
+GET_PROPOSALS = {
+    'type': 'object',
+    'additionalProperties': False,
+    'properties': {'proposal_id': {'type': 'string', 'description': 'From propose_trade. Leave out to list the trades you prepared for this person.'}},
+}
+
+
+def propose_trade(args, up, account):
+    _unknown_keys(args, PROPOSE_TRADE)
+    out = shape.trade_propose(account.post('/api/agents/v1/trades/proposals', args))
+    if out is None:
+        raise appauth.Unavailable('Hence gave an answer that could not be read (proposed trade). Ask again: the same request reaches the same proposal')
+    hint = _case_hint(args.get('market_id'))
+    if not out['ok'] and hint and any(p['field'] in ('market_id', '') for p in out['problems']):
+        out['hint'] = hint
+    return out
+
+
+_RHC_ID = re.compile(r'^spot:4663:0x[0-9a-fA-F]{40}$')
+
+
+def _case_hint(market_id):
+    """What to say when a spot id was refused and letter case is the likely reason. An
+    upper-case Robinhood Chain address and a lower-cased Solana mint got the generic "not a
+    market" answer, and an agent cannot tell from that that only the case was wrong."""
+    if not isinstance(market_id, str):
+        return None
+    if _RHC_ID.match(market_id) and market_id != market_id.lower():
+        return 'Robinhood Chain addresses are written in lower-case hex here: use the market_id exactly as search_markets gave it.'
+    if market_id.startswith('spot:solana:'):
+        return 'A Solana mint is case-sensitive: copy the market_id exactly as search_markets gave it, letter case included.'
+    return None
+
+
+def propose_basket(args, up, account):
+    _unknown_keys(args, PROPOSE_BASKET)
+    if not shape.UUID_RE.match(_string(args, 'thesis_id', 64)):
+        raise ToolError('`thesis_id` is not a thesis id. Use the one a thesis tool returned.')
+    out = shape.trade_propose(account.post('/api/agents/v1/trades/proposals', dict(args, thesis_id=args['thesis_id'].lower())))
+    if out is None or (out.get('proposal') or {}).get('kind') not in (None, 'basket'):
+        raise appauth.Unavailable('Hence gave an answer that could not be read (proposed basket). Ask again: the same request reaches the same proposal')
+    return out
+
+
+def get_trade_proposals(args, up, account):
+    _unknown_keys(args, GET_PROPOSALS)
+    proposal_id = _string(args, 'proposal_id', 64)
+    if not proposal_id:
+        out = shape.trade_list(account.get('/api/agents/v1/trades/proposals'))
+    elif not shape.PROPOSAL_RE.match(proposal_id):
+        raise ToolError('`proposal_id` is not a proposal id. Use the one propose_trade returned.')
+    else:
+        out = shape.trade_proposal(account.get('/api/agents/v1/trades/proposals/' + proposal_id))
+    if out is None:
+        raise appauth.Unavailable('Hence gave an answer that could not be read (proposed trade)')
+    return out
+
+
+def _tool(name, title, description, schema, handler, scope=None, writes=False, unread=None):
     tool = {
         'name': name, 'title': title, 'description': description, 'inputSchema': schema,
-        'annotations': {'title': title, 'readOnlyHint': True, 'destructiveHint': False,
+        # writes: this tool changes something for the person (hosts ask before running it).
+        # Saving the same thesis twice updates one draft, so it is idempotent; nothing is deleted.
+        'annotations': {'title': title, 'readOnlyHint': not writes, 'destructiveHint': False,
                         'idempotentHint': True, 'openWorldHint': True},
         'handler': handler,
     }
     if scope:
         tool['scope'] = scope       # the permission the person must have given; its handler takes an account
+    if unread:
+        # what was not read or done when Hence did not answer. Every signed-in failure once said "Your account
+        # was not read", even when it was the thesis service that failed and the account was never the read.
+        tool['unread'] = unread
     return tool
 
 
@@ -409,8 +959,22 @@ TOOLS = [
     _tool('search_markets', 'Search Hence markets',
           'Find what can be traded on Hence and where: perpetuals on Hyperliquid and its builder venues (crypto, '
           'stocks, indices, pre-IPO valuations, rates) with live price, 24h change, funding and open interest, and '
-          'spot tokens on Robinhood Chain. A null figure means it was not read, not that it is zero.',
+          'spot tokens on Robinhood Chain with price, 24h change, volume and liquidity from Hence\'s latest snapshot when this server passes them on '
+          '(it can be hours old: say so). A null figure means it was not read, not that it is zero. For one asset '
+          'in full, pass its ticker with `limit` 1.',
           SEARCH_MARKETS, search_markets),
+    _tool('get_asset', 'Research one asset',
+          'What Hence knows about one asset: its live price on each venue Hence trades it on, 90 days of daily prices, '
+          'and for a listed company its profile, analyst ratings and price targets, insider trades, earnings, headlines '
+          'and fundamentals, plus Hence\'s own daily analysis when there is one. Works for a market from search_markets '
+          'and for a US-listed company Hence does not trade (research only). A null section named in `unavailable` was '
+          'not read: say so. Prices are the venue\'s or a reference quote that may be delayed, as each says.',
+          GET_ASSET, get_asset),
+    _tool('get_thesis_guide', 'How to write a Hence thesis',
+          'Read this before writing a thesis yourself: the method (claim, mechanism, exposures, weights, sources, '
+          'checkpoints) and the %s format. Use it when the person has a view of their own or wants a basket shaped '
+          'to their constraints, instead of asking Hence to research one.' % THESIS_FORMAT,
+          GUIDE, get_thesis_guide),
 ]
 
 BY_NAME = {t['name']: t for t in TOOLS}
@@ -421,13 +985,98 @@ ACCOUNT_TOOLS = [
     _tool('get_my_account', 'Your Hence account',
           'The Hence username of the person using this agent. Needs their Hence account to be connected: '
           'if it is not, the client will ask them to sign in to Hence and allow it.',
-          ACCOUNT, get_my_account, scope='account:read'),
+          ACCOUNT, get_my_account, scope='account:read', unread='Your account was not read.'),
+    _tool('list_my_theses', 'Your theses',
+          'The theses of the person using this agent: the ones they wrote (private ones included), saved, follow, hold '
+          'on paper, or archived. Returns cards with a link; call get_my_thesis for one in full. If `unread_count` is '
+          'present the list is not complete: say so. Needs their Hence account connected.',
+          LIST_MY_THESES, list_my_theses, scope='theses:read', unread='Your theses were not read.'),
+    _tool('get_my_thesis', 'Read one of your theses',
+          'One thesis of the person using this agent in full, including a private one: the claim, every holding with '
+          'its weight and reason, sources, checkpoints, versions, and a hypothetical price history. If `performance` '
+          'is null, do not state a return. Needs their Hence account connected.',
+          GET_MY_THESIS, get_my_thesis, scope='theses:read', unread='The thesis was not read.'),
+    _tool('get_my_portfolio', 'Your positions and results',
+          'What the person using this agent holds and has done on Hence: open perpetual positions read live from the '
+          'venue, their Hyperliquid account value and available cash, outcome-market positions, realized trading '
+          'results from recorded fills, and the last account value Hence recorded (with its date). With `include_spot`, '
+          'also Robinhood Chain tokens and wallet stablecoins. It is NOT one total: `not_included` lists what is '
+          'missing, and the parts must not be added together. If `positions.complete` is false, a wallet has entries '
+          'in `unread`, or a section is in `unavailable`, say what could not be read; a null is unknown, never zero. '
+          'If `no_wallet` is true, no wallet is linked to the account: say that, not that something failed. '
+          'Needs their Hence account connected.',
+          GET_MY_PORTFOLIO, get_my_portfolio, scope='portfolio:read', unread='Your portfolio was not read.'),
+    _tool('check_thesis', 'Check a thesis you wrote',
+          'Have Hence check a thesis you wrote in the %s format (see get_thesis_guide). Saves nothing. Returns every '
+          'problem at once, each naming the field to change, warnings the person should hear, and the thesis as Hence '
+          'would store it, with each holding named from Hence\'s own listings. Fix the problems and check again.' % THESIS_FORMAT,
+          CHECK_THESIS, check_thesis, scope='theses:write', unread='The thesis was not checked.'),
+    _tool('save_thesis_draft', 'Save a thesis as a draft',
+          'Put a thesis you wrote into the person\'s Hence library as a private draft. Only after check_thesis has no '
+          'problems AND the person has seen the thesis and agreed. It does not create, publish or trade anything: the '
+          'person opens the returned url in Hence, reviews the draft and saves it there. It is labelled as written by '
+          'you, not by Hence. Saving the same thesis again updates the same draft.',
+          SAVE_THESIS, save_thesis_draft, scope='theses:write', writes=True,
+          unread='Hence did not confirm the draft was saved. Saving the same thesis again updates the same draft.'),
+    _tool('get_thesis_research', 'Follow Hence research',
+          'The state of a research run Hence is doing for the person: queued, running (with what it is doing now), or '
+          'finished, with the thesis and its url once there is one. Without a run_id, lists what is in progress and what '
+          'recently finished. A run takes 20 to 40 minutes: check back, do not wait in a loop. Hence also notifies the '
+          'person in the app when it finishes.',
+          GET_RESEARCH, get_thesis_research, scope='theses:read', unread='The research was not read.'),
+]
+
+# Offered only while config.research_active(): the one tool that spends Hence's money.
+RESEARCH_TOOLS = [
+    _tool('start_thesis_research', 'Ask Hence to research an idea',
+          'Ask Hence to research an idea and build a thesis for the person, the way the app does when they type one. It '
+          'takes 20 to 40 minutes and counts toward the person\'s daily research limit, so ask them first. Steer it with '
+          '`guidance`, `must_include`, `exclude` and `basket`. Returns a run_id: follow it with get_thesis_research. The '
+          'finished thesis is Hence\'s research, saved to their account and shared like any thesis they create. To write '
+          'the thesis yourself instead, at no cost to their limit, see get_thesis_guide.',
+          START_RESEARCH, start_thesis_research, scope='theses:research', writes=True,
+          unread='Hence did not confirm that research started. Asking again with the same request reaches the same run.'),
+]
+
+
+# Offered only while config.trades_active(). Neither places an order: the first stores a trade
+# for the person to review and sign in Hence, the second reads back what they did with it.
+TRADE_TOOLS = [
+    _tool('propose_trade', 'Prepare a trade for the person',
+          'Prepare ONE trade for the person to review and sign in Hence: a perpetual order, or a purchase of a spot token '
+          'or of one side of an outcome market. It does NOT place the trade and you '
+          'cannot place one: Hence stores it, the person opens the returned url, their own order ticket is filled in '
+          'with your numbers, and they review and sign it with their own wallet (they can change anything first). Only '
+          'when the person has asked for this trade or agreed to it in this conversation. Find the market with '
+          'search_markets first. `size_usd` is the position\'s value, not the margin. Never say the trade was made: '
+          'say it is waiting for them in Hence, give the url, and pass on every warning. Hence adds its fee to the '
+          'order they sign; `hence_fee` says the most it can be. Hence allows 30 new proposals per account per day and 10 '
+          'waiting at once; asking again for a proposal that already exists does not count.',
+          PROPOSE_TRADE, propose_trade, scope='trades:propose', writes=True,
+          unread='Hence did not confirm a proposal. Asking again with the same request reaches the same proposal.'),
+    _tool('propose_basket', 'Prepare buying a thesis for the person',
+          'Prepare buying the basket of ONE thesis for the person to review and sign in Hence: the thesis, how much money '
+          'to put in, and optionally which basket (perps or spot) and a leverage. It does NOT buy anything and you cannot: '
+          'the person opens the returned url, the thesis page\'s own ticket is filled in with the amount, and they review '
+          'the basket and sign it with their own wallet. The holdings are the thesis\'s own; you cannot change them here. '
+          'Only when the person asked for this or agreed to it in this conversation. `amount_usd` is the money put in, '
+          'not the positions\' value. Never say it was bought: say it is waiting for them in Hence and give the url.',
+          PROPOSE_BASKET, propose_basket, scope='trades:propose', writes=True,
+          unread='Hence did not confirm a proposal. Asking again with the same request reaches the same proposal.'),
+    _tool('get_trade_proposals', 'What happened to a prepared trade',
+          'Where a trade you prepared stands: waiting, opened by the person, placed (with whether the venue\'s own '
+          'record confirms the fill), dismissed, expired or withdrawn. Without a proposal_id, lists the trades you '
+          'prepared for this person. Only `placed` means an order exists, and the order is what the person placed, '
+          'which may differ from what you proposed. A basket is never reported as placed: Hence does not record that. '
+          'For their positions, use get_my_portfolio.',
+          GET_PROPOSALS, get_trade_proposals, scope='trades:propose', unread='The prepared trades were not read.'),
 ]
 
 
 def listed():
     """The tools this server offers right now, in a stable order."""
-    return TOOLS + (ACCOUNT_TOOLS if config.accounts_active() else [])
+    return (TOOLS + (ACCOUNT_TOOLS if config.accounts_active() else []) + (RESEARCH_TOOLS if config.research_active() else [])
+            + (TRADE_TOOLS if config.trades_active() else []))
 
 
 def find(name):
@@ -435,5 +1084,11 @@ def find(name):
 
 
 def public_definition(tool):
-    """What tools/list sends: everything but the handler and the server-side permission."""
-    return {k: v for k, v in tool.items() if k not in ('handler', 'scope')}
+    """What tools/list sends: everything but the handler and the server-side permission, plus
+    the card that can draw its answer in a chat, when it has one (cards.py)."""
+    from . import cards
+    out = {k: v for k, v in tool.items() if k not in ('handler', 'scope', 'unread')}
+    meta = cards.tool_meta(tool['name'])
+    if meta:
+        out['_meta'] = meta
+    return out

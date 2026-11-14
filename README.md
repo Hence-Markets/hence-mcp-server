@@ -9,10 +9,12 @@ spot tokens and outcome markets, and tracks it. This server is a small
 [Model Context Protocol](https://modelcontextprotocol.io) server (Streamable HTTP) in front of
 the Hence app.
 
-**This version is read-only.** It holds no key to anyone's money and no database. Its public
-tools read what the Hence app already shows a signed-out visitor. A person can also connect
-their Hence account, and then one more tool reads their username. It cannot create an account,
-a thesis or a trade; to act on anything, a person opens the returned link in Hence.
+**It reads, and it can leave a draft.** It holds no key to anyone's money and no database. Its
+public tools read what the Hence app already shows a signed-out visitor. A person can also
+connect their Hence account; then it can read their own theses and positions, and put a
+thesis the agent wrote into their library as a private draft for them to review. It cannot
+create an account, publish a thesis, place a trade or move money; to act on anything, a
+person opens the returned link in Hence.
 
 > This replaces the earlier TypeScript server (v0.1), which wrapped a previous Hence API that
 > no longer exists. Its tool names (`hence_start_market_workflow` and the rest) are gone.
@@ -24,16 +26,241 @@ a thesis or a trade; to act on anything, a person opens the returned link in Hen
 | `search_theses` | Public theses, by words, basket (perps or spot) and order; paged with a cursor |
 | `get_thesis` | One thesis: the claim, holdings with weights and reasons, other baskets, sources, checkpoints, and a price history |
 | `get_featured_theses` | Today's featured selection |
-| `search_markets` | What trades on Hence and where: perpetuals with live price, funding and open interest, and Robinhood Chain spot tokens |
+| `search_markets` | What trades on Hence and where: perpetuals with live price, funding and open interest, Robinhood Chain spot tokens, stocks and tokens on Solana (one row per stock), and outcome (event) markets on Hyperliquid, one row per side |
+| `get_asset` | Research on one asset: its live price on each venue, 90 days of daily prices, and for a listed company its profile, analyst ratings and targets, insider trades, earnings, headlines, fundamentals and Hence's own daily analysis. Also answers for a US-listed company Hence does not trade |
+| `get_thesis_guide` | How to write a Hence thesis yourself: the method and the `hence-thesis/1` format |
 
-With sign-in switched on there is a fifth:
+With sign-in switched on there are up to eleven more, each touching only the connected person's own account.
+Four of them change something: `save_thesis_draft` leaves a draft, `start_thesis_research` starts the
+person's own research run, and `propose_trade` and `propose_basket` prepare a trade for the person to review
+and sign in Hence.
+None publishes on the agent's say-so, places an order, or moves money.
 
 | Tool | What it reads | Needs |
 |---|---|---|
 | `get_my_account` | The connected person's Hence username | Their Hence account connected, permission `account:read` |
+| `list_my_theses` | Their theses: written, saved, followed, held on paper or archived, private ones included | `theses:read` |
+| `get_my_thesis` | One of them in full, with versions and a price history | `theses:read` |
+| `get_my_portfolio` | Open perpetual positions read live, the Hyperliquid account's value and available cash (by its account mode), outcome-market positions, realized trading results, and the last account value Hence recorded. With `include_spot`, Robinhood Chain tokens and wallet stablecoins too. It says what it does not include, and never adds the parts into one total | `portfolio:read` |
+| `check_thesis` | Hence's verdict on a thesis the agent wrote: every problem at once, warnings, and the thesis as Hence would store it. Saves nothing | `theses:write` |
+| `save_thesis_draft` | Puts that thesis in the person's Hence library as a private draft | `theses:write` |
+| `get_thesis_research` | The state of a Hence research run: what it is doing now, or the thesis once there is one. Without a run id, what is in progress and what recently finished | `theses:read` |
+| `start_thesis_research` | Asks Hence to research an idea for the person, steered by their guidance, must-include and exclude lists and venue. Takes 20 to 40 minutes and counts toward their daily limit. Offered only with `HENCE_MCP_RESEARCH=1` | `theses:research` |
+| `propose_trade` | Prepares one order for the person to review and sign in Hence: a perpetual (side, size, leverage, market or limit), or a purchase in dollars of a Robinhood Chain token, of a stock on Solana, or of one side of an outcome market. Places nothing. Offered only with `HENCE_MCP_TRADES=1` | `trades:propose` |
+| `propose_basket` | Prepares buying one thesis's basket: the thesis, the money put in, optionally which basket and a leverage. Buys nothing. Offered only with `HENCE_MCP_TRADES=1` | `trades:propose` |
+| `get_trade_proposals` | Where a prepared trade stands: waiting, opened, placed (and whether the venue's record confirms the fill), dismissed, expired or withdrawn. Offered only with `HENCE_MCP_TRADES=1` | `trades:propose` |
 
 Few tools on purpose. A caller pays for every tool description on every turn; the whole list
 is about a thousand tokens.
+
+## Writing the thesis yourself
+
+An agent does not have to ask Hence to research an idea. It can do the thinking itself, with
+its own model and sources, and hand Hence the result:
+
+1. `get_thesis_guide` gives the method and the format (`skills/hence/write-a-thesis.md` is the
+   same text).
+2. `search_markets` finds each holding; its `market_id` goes into the thesis unchanged.
+3. `check_thesis` returns every problem at once. Holdings are matched to Hence's own listings,
+   and their names and venues come from Hence, not from the agent.
+4. The agent shows the person the thesis. If they agree, `save_thesis_draft` puts it in their
+   Hence library as a private draft, labelled as written by that agent.
+5. The person opens the draft in Hence, changes what they want and saves it. That save is
+   what makes it a thesis. Nothing an agent sends becomes one on its own.
+
+This costs Hence no research run, and the person gets a basket shaped to what they asked for.
+
+## Asking Hence to research it
+
+The other way to get a thesis: `start_thesis_research` runs the same build the app runs when a
+person types an idea. It reads the idea, screens the whole catalogue and builds a basket, in
+20 to 40 minutes. The person steers it through their agent with `guidance`, `must_include`,
+`exclude` and `basket`. It returns a run id; `get_thesis_research` says what it is doing and,
+when it finishes, where the thesis is. Hence also notifies the person in the app.
+
+**Being told when it finishes.** The server speaks the protocol's tasks extension
+(`io.modelcontextprotocol/tasks`, revision 2026-07-28). A client that declares the extension on
+its request gets a task handle back from `start_thesis_research` instead of a result, polls
+`tasks/get`, and tells the person when the research is done; the Claude Code command line does
+this today. A client that does not declare it gets the ordinary result and checks back with
+`get_thesis_research`, as before.
+
+- The task **is** the person's research run in Hence. Its id is the run's id and its state is
+  read from the app under the person's connection on every poll, so this server stores
+  nothing and a restart loses nothing.
+- A task is returned only for a run the app said it started: never for a refusal, and never
+  to a client that did not declare the extension on that request.
+- A run that ends without a thesis is a completed task that says what happened. A read that
+  fails is "poll again", never a finished task.
+- `tasks/cancel` is acknowledged, and nothing is sent to Hence: a run is not stopped once it
+  has started. `tasks/update` is refused, because a run never waits for input.
+
+It is the one tool that spends Hence's money, so it has its own switch (`HENCE_MCP_RESEARCH`,
+which must match the app's `AGENT_RESEARCH_ACTIVE`), its own permission, and counts toward the
+person's daily research limit. The same request on the same day reaches the same run, so a
+retry never starts a second one.
+
+## Researching one asset
+
+`get_asset` is Hence as a research desk. It takes a market id from `search_markets` or a
+plain ticker and returns the sections asked for: `quote`, `history`, `profile`, `analysts`,
+`insiders`, `earnings`, `news`, `fundamentals`, `analysis`. Left out, it returns the first three.
+
+- It is one read of the app (`GET /api/research/asset`). The sections are named by allowlist;
+  each section's contents are the app's own, passed on as plain data bounded in depth and size
+  (`shape.plain`), not field by field. The server refuses an answer in which a section is null without the app saying
+  why (`unavailable`: it could not be read; `not_applicable`: it does not exist for this kind
+  of asset).
+- No argument is a date, a limit or a page: a caller cannot vary what the app asks its data
+  vendors for.
+- A company Hence does not trade is answered too, marked research only.
+- The card draws the price line from the daily closes it was given. Fewer than two points
+  draws no line.
+
+It needs the app's `ASSET_RESEARCH_ACTIVE=1`; without it the tool answers that nothing was found.
+
+## Preparing a trade
+
+"Propose, I approve". `propose_trade` takes a perpetual from `search_markets`, a side, a size
+in dollars (the position's value, not the margin) and optionally a leverage, a limit price, a
+one-line reason and how long it stays open. Hence checks the market against its own listings
+and stores the proposal. The answer carries a link.
+
+The person opens the link in Hence. The page shows what the agent prepared and who prepared
+it; one button fills the terminal's own order ticket with those numbers and takes them there.
+From that point nothing is new: they can change any number, they press the ticket's button,
+they review the order and they sign it with their own wallet. Hence's fee is attached by the
+ticket, as on any order they type. An order filled in from an agent always shows the review
+step.
+
+What this server can and cannot do:
+
+- It **cannot place an order.** It holds no wallet and no key, and the only thing it sends is
+  the proposal's words, to one path of the app.
+- It **never says a trade was made** unless the app says `placed` and sends the order. That
+  needs the person's own order receipt for the same market and side; `confirmed_by_venue`
+  needs the venue's own fill record.
+- A proposal **expires** (a day by default, three at most) and stops being openable when the
+  person dismisses it or disconnects the agent.
+- **Limits:** 30 new proposals per account per day, and 10 waiting at once. Asking again for a
+  proposal that already exists reaches the same one and does not count.
+- One order, or one thesis's basket. An order is a perpetual, a purchase of a Robinhood Chain
+  token, a purchase of a stock or token on Solana, or a purchase of one side of an outcome
+  market on Hyperliquid. Elysium tokens and Polymarket are refused for now.
+- A **stock on Solana** can have several issuers' tokens. `search_markets` lists one row per
+  stock, named by a token Hence offers, and the Hence ticket buys whichever of the stock's
+  tokens quotes best. The app recognises a purchase of any of them as that proposal's. A mint
+  is case-sensitive and is passed on exactly as read.
+- A **purchase is a buy and only a buy**: `side` is `long`, `size_usd` is the dollars to spend,
+  and a leverage or a limit order is refused by name. An outcome side cannot be shorted: its
+  other side is its own contract (`other_side` in `search_markets`).
+- A purchase the person sent that is not confirmed yet comes back as order state `pending`.
+  It is passed on as that, never as filled: it can still fail.
+
+`propose_basket` is the same idea for a thesis: the thesis id, the money to put in, and
+optionally which basket and a leverage. The link opens the thesis with the amount filled into
+its own ticket; the holdings are the thesis's own. Hence checks the thesis version again when
+the person opens it, and fills nothing if the thesis was revised since. A basket is never
+reported as bought, because the basket ticket's receipts carry no proposal id.
+
+Its own switch (`HENCE_MCP_TRADES`, which must match the app's `AGENT_TRADES_ACTIVE`) and its
+own permission, `trades:propose`.
+
+## Cards inside the chat
+
+In a host that supports MCP Apps (Claude, Claude Desktop, VS Code Copilot and others), a
+thesis is drawn in the conversation instead of only being described: its holdings as bars, the
+price history as figures, the checkpoints, and a button that opens it in Hence. The five tools
+that return a thesis or a list of theses point at one page, `ui://hence/thesis-card`
+(`data/thesis-card.html`, served by `gateway/cards.py`).
+
+The page is self-contained. It loads nothing and calls nothing (its content policy is empty),
+puts every value on the page as text and never as markup, shows an unread figure as "n/a", and
+shows Hence's own sentence when a tool could not answer. The only thing it asks the host for
+is to open a link. A host without card support ignores it: every tool still returns its whole
+answer as text.
+
+The same page draws what can be traded (`search_markets`): one asset in full, with its price,
+24 hour change, funding, open interest and volume and a "Trade in Hence" button, or a list of
+assets where each row opens that market in Hence. A spot token on Robinhood Chain shows its price,
+24 hour change, volume and liquidity from Hence's latest snapshot unless `HENCE_MCP_SPOT_FIGURES=0`;
+a token on Solana and a spot token with figures withdrawn show no price, and the card says to open
+the link for it.
+
+The same page draws a trade the agent prepared (`propose_trade`, `get_trade_proposals`): the
+market, side, size, leverage and order type, the agent's reason marked as the agent's, and a
+"Review and sign in Hence" button. It says "not placed" until the app itself reports an order.
+
+## The `hence` command
+
+The same tools from a terminal, for scripts and for coding agents without an MCP client. It is
+a thin client of this server (`hence_cli/`, standard library only), so a tool the server gains
+is available at once through `hence tools` and `hence call`.
+
+```bash
+pipx install git+https://github.com/Hence-Markets/hence-mcp-server
+
+hence theses search AI capex        # public theses about something
+hence theses featured               # today's featured theses
+hence thesis <id or link>           # one thesis in full
+hence markets nvda                  # what can be traded on Hence, and where
+hence asset perp:xyz:NVDA --all     # research on one asset: price, history, analysts, insiders, earnings, news
+hence login                         # connect this terminal to your Hence account
+hence whoami
+hence my theses                     # your own theses, private ones included
+hence my thesis <id or link>        # one of them in full
+hence portfolio                     # your positions, account value and cash, outcome positions, trading results
+hence portfolio --spot              # the same, plus Robinhood Chain tokens and wallet stablecoins (slower)
+hence guide                         # how to write a Hence thesis yourself
+hence draft new > thesis.json       # a blank thesis to fill in
+hence draft check thesis.json       # what is wrong with it; nothing is saved
+hence draft save thesis.json        # save it as a private draft (asks first; --yes to skip)
+hence research start "<idea>"       # ask Hence to research it (asks first; --wait to stay until it is done)
+hence research status <run>         # how a run is going
+hence research list                 # what is in progress and what recently finished
+hence trade propose perp:BTC long 200   # prepare a trade to review and sign in Hence (asks first; places nothing)
+hence trade basket <thesis> 500     # prepare buying a thesis's basket (asks first; buys nothing)
+hence trade status <proposal>       # what happened to it
+hence trade list                    # the trades prepared from this terminal
+hence tools                         # everything the server offers right now
+hence call <tool> --arg key=value   # any tool by name
+```
+
+`--json` on any of them prints the exact structured answer. `--server` or `HENCE_MCP_URL`
+points it at another server (https only, or this machine).
+
+What it promises:
+
+- **A failure is never data.** The reason goes to stderr, the exit code is non-zero and stdout
+  is empty. Exit `1`: Hence could not do it. Exit `3`: run `hence login`.
+- **A figure that was not read prints as `n/a`**, never as zero, and every note the server
+  sent (a source that could not be read, "results are hypothetical") is printed under the result.
+- **The sign-in stays put.** `hence login` opens Hence in the browser; you press Allow there.
+  The credential is kept in `~/.config/hence/credentials.json`, readable only by you, and is
+  sent only to the server it was issued for, only when that server asks for it. It is never
+  printed. `hence logout` tells Hence to close the connection.
+
+## For coding agents: the skill
+
+`skills/hence/SKILL.md` teaches an agent when to use which tool and how to report what it
+reads (unread figures are unavailable, returns are hypothetical, give the link, no advice).
+
+In Claude Code this repository is a plugin that brings the MCP server and the skill together:
+
+```
+/plugin marketplace add Hence-Markets/hence-mcp-server
+/plugin install hence@hence-markets
+```
+
+To add only the MCP server:
+
+```bash
+claude mcp add --transport http hence https://mcp.hence.markets/mcp
+```
+
+For any other agent, copy the `skills/hence` folder into its skills directory and add the
+server address above to its MCP settings. Signing in to a Hence account happens in the
+browser the first time a tool needs it (in Claude Code, through `/mcp`).
 
 ## Connecting a Hence account
 
@@ -71,9 +298,12 @@ connection. A disconnect takes effect on the next call, not when the token expir
    thesis's one-month return is stated only when its replay is complete.
 3. **Returns are labelled for what they are.** Price history is hypothetical, before costs,
    and not a live track record. Results say so.
-4. **Some figures are deliberately absent.** Spot token prices, volumes and holder counts
-   reach Hence from a data vendor under terms that do not allow passing them to other
-   software, so a spot token comes back with its identity and link and `price: null`.
+4. **A snapshot figure says it is one.** A spot token's price, 24 hour change, volume,
+   liquidity and market cap come from Hence's market snapshot, which can be minutes to a few
+   hours old; the result says so (`price_note`). These figures are bought from a data vendor
+   and are served on the owner's decision that Hence's data goes to people's agents as it
+   goes to people. `HENCE_MCP_SPOT_FIGURES=0` withdraws them: a spot token then comes back
+   with its identity and link and `price: null`.
 5. **Thesis text is content, not instruction.** It is written by Hence users and Hence's
    research pipeline. Results label it, and the server tells the model to report it rather
    than follow it. Account ids never leave: an author is a name.
@@ -120,6 +350,9 @@ docker build -t hence-mcp-server . && docker run --rm -p 127.0.0.1:4340:4340 -e 
 | `HENCE_MCP_ALLOWED_ORIGINS` | the public base | Browser origins allowed to call. Server-side clients send no `Origin` and are unaffected; `localhost` is always allowed |
 | `HENCE_MCP_ACCOUNTS` | `0` | Strictly `1` turns sign-in on. It also needs the secret below; with either missing, the signed-in tool is not listed and no sign-in is advertised |
 | `HENCE_MCP_GATEWAY_SECRET` | unset | The secret this server signs its calls to the Hence app with, at least 32 characters. The app holds the same value |
+| `HENCE_MCP_RESEARCH` | `0` | Strictly `1` offers `start_thesis_research`. Needs sign-in on, and the app's `AGENT_RESEARCH_ACTIVE=1` |
+| `HENCE_MCP_SPOT_FIGURES` | `1` | `0` withdraws spot token prices, volume, liquidity and market cap (identity and link stay) |
+| `HENCE_MCP_TRADES` | `0` | Strictly `1` offers `propose_trade`, `propose_basket` and `get_trade_proposals`. Needs sign-in on, and the app's `AGENT_TRADES_ACTIVE=1` |
 | `HENCE_MCP_RESOURCE` | `https://mcp.hence.markets/mcp` | This server's own address. A credential is issued for exactly this address |
 | `HENCE_AUTH_ISSUER` | `https://app.hence.markets` | Who signs people in |
 
@@ -159,7 +392,12 @@ gateway/tools.py      the four tools
 gateway/protocol.py   MCP, both eras, no sockets
 gateway/limits.py     the flood guard
 gateway/app.py        the HTTP server
-data/                 display names for a few venue contracts
+gateway/cards.py      the card a chat host can draw a thesis with (MCP Apps)
+data/                 display names for a few venue contracts, the thesis guide, the card's page
+hence_cli/            the `hence` command: a client of this server (not in the image)
+skills/hence/         the skill for coding agents
+.claude-plugin/       this repository as a Claude Code plugin and its own marketplace
+.mcp.json             the server address, for the plugin
 ```
 
 ## What comes next
