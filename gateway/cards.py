@@ -3,6 +3,7 @@
 A host that supports MCP Apps (Claude, Claude Desktop, VS Code Copilot and others) can draw a
 tool's answer as a small page instead of only handing the model JSON. This server offers one:
 a thesis, or a list of theses, with holdings, the price history and a button that opens Hence;
+a market (its price, 24 hour change, funding and open interest) or a list of markets;
 and a trade the agent prepared, with a button that opens it in Hence for the person to review
 and sign. The card places nothing and says "not placed" until the app itself says otherwise.
 
@@ -22,8 +23,10 @@ from . import config
 
 CARD = 'ui://hence/thesis-card'
 MIME = 'text/html;profile=mcp-app'
-# the tools whose answer the card can draw: one thesis, a list of them, or a prepared trade
-TOOLS = ('search_theses', 'get_thesis', 'get_featured_theses', 'list_my_theses', 'get_my_thesis', 'propose_trade', 'get_trade_proposals')
+# the tools whose answer the card can draw: one thesis, a list of them, what can be traded
+# (one market in full, or a list), or a prepared trade
+TOOLS = ('search_theses', 'get_thesis', 'get_featured_theses', 'search_markets', 'list_my_theses', 'get_my_thesis', 'propose_trade',
+         'get_trade_proposals')
 
 _HTML = None
 
@@ -43,8 +46,8 @@ def tool_meta(name):
 
 def listing():
     return [{'uri': CARD, 'name': 'hence-thesis-card', 'title': 'Hence thesis card',
-             'description': 'Draws a Hence thesis, a list of theses, or a trade prepared for the person to review and sign in Hence, '
-                            'inside the conversation.', 'mimeType': MIME}]
+             'description': 'Draws a Hence thesis, a list of theses, a market with its live figures, a list of markets, or a trade prepared '
+                            'for the person to review and sign in Hence, inside the conversation.', 'mimeType': MIME}]
 
 
 def read(uri):

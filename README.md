@@ -122,6 +122,11 @@ shows Hence's own sentence when a tool could not answer. The only thing it asks 
 is to open a link. A host without card support ignores it: every tool still returns its whole
 answer as text.
 
+The same page draws what can be traded (`search_markets`): one asset in full, with its price,
+24 hour change, funding, open interest and volume and a "Trade in Hence" button, or a list of
+assets where each row opens that market in Hence. A spot token shows no price here (this server
+does not pass that data on); the card says to open the link for it.
+
 The same page draws a trade the agent prepared (`propose_trade`, `get_trade_proposals`): the
 market, side, size, leverage and order type, the agent's reason marked as the agent's, and a
 "Review and sign in Hence" button. It says "not placed" until the app itself reports an order.

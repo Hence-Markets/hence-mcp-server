@@ -62,7 +62,7 @@ Exit codes: `0` done; `1` Hence could not do it (the reason is on stderr and std
 | "What does Hence have on X?" / "any theses about X?" | `search_theses` with their words |
 | "What is good on Hence today?" | `get_featured_theses` |
 | "Tell me about this thesis" / a `app.hence.markets/t/...` link | `get_thesis` |
-| "Where can I trade X?" / "is X listed?" | `search_markets` |
+| "Where can I trade X?" / "is X listed?" / "show me X" / "what is moving?" | `search_markets`. Pass the ticker with `limit` 1 to show one asset in full; leave the query out for the most traded |
 | "Which Hence account is this?" | `get_my_account` (needs sign-in) |
 | "What are my theses?" / "how is my thesis doing?" | `list_my_theses`, then `get_my_thesis` (needs sign-in) |
 | "What am I holding?" / "how have I traded?" | `get_my_portfolio` (needs sign-in) |

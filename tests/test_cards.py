@@ -13,7 +13,7 @@ import re
 import unittest
 from unittest import mock
 
-from gateway import cards, protocol, tools
+from gateway import cards, protocol, shape, tools
 
 from .support import T1, StubUpstream, standard_routes
 from .test_account import ON
@@ -72,11 +72,11 @@ class Served(unittest.TestCase):
         self.assertEqual(with_card, sorted(cards.TOOLS))
         # theses, and a trade PREPARED for the person: its card says "not placed" and opens Hence (tests/test_trades.py)
         self.assertEqual(with_card, ['get_featured_theses', 'get_my_thesis', 'get_thesis', 'get_trade_proposals', 'list_my_theses', 'propose_trade',
-                                     'search_theses'])
+                                     'search_markets', 'search_theses'])
         for name in with_card:
             self.assertEqual(listed[name], {'ui': {'resourceUri': 'ui://hence/thesis-card'}})
         # nothing else that writes, and nothing that reads the person's money, draws itself into a chat
-        for name in ('save_thesis_draft', 'start_thesis_research', 'get_my_portfolio', 'get_my_account', 'check_thesis', 'search_markets'):
+        for name in ('save_thesis_draft', 'start_thesis_research', 'get_my_portfolio', 'get_my_account', 'check_thesis'):
             self.assertIsNone(listed[name], name)
 
     def test_a_host_without_cards_still_gets_the_whole_answer_in_text(self):
@@ -120,6 +120,38 @@ class ThePage(unittest.TestCase):
         self.assertIn('if (event.source !== window.parent) return;', html)         # only the host is listened to
         # the page asks the host for nothing but to open a link: no tool calls, no messages sent as the person
         self.assertNotRegex(html, r"request\('(tools/call|ui/message|ui/update-model-context|resources/read)'")
+
+    def test_a_market_is_drawn_from_the_fields_the_search_returns(self):
+        html = page()
+        up = StubUpstream(standard_routes())
+        found = tools.search_markets({'query': ''}, up)
+        perp = next(m for m in found['markets'] if m['kind'] == 'perp')
+        for field in ('symbol', 'name', 'venue', 'kind', 'asset_class', 'price', 'change_24h_pct', 'funding_apr_pct', 'open_interest_usd', 'volume_24h_usd', 'url'):
+            self.assertIn(field, perp, field)
+            self.assertIn('m.' + field, html, field)
+        spot = shape.spot_market({'address': '0x' + 'A' * 40, 'chainId': 4663, 'sym': 'NVDA', 'name': 'NVIDIA', 'cls': 'equity'}, 'https://app.hence.markets')
+        for field in ('price_note', 'contract'):
+            self.assertIn(field, spot, field)
+            self.assertIn('m.' + field, html, field)
+        for field in ('markets', 'matches', 'prices_as_of_unix', 'coverage'):
+            self.assertIn(field, found, field)
+            self.assertIn('value.' + field, html, field)
+        self.assertIn('value.incomplete', html)                                    # a list that was only half read says so
+
+    def test_a_market_figure_that_was_not_read_is_n_a_and_the_card_places_nothing(self):
+        html = page()
+        self.assertIn("if (!isNum(v)) return 'n/a';", html)                        # open interest and volume
+        self.assertIn("minimumFractionDigits: v >= 1 ? 2 : 0, maximumFractionDigits: v >= 100 ? 2 : v >= 1 ? 4 : 8 }) : 'n/a'", html)   # a price
+        # a spot token's price is not passed on by this server: the card says where to see it, never a number
+        self.assertIn("m.kind === 'perp' ? px(m.price) : 'in Hence'", html)
+        self.assertIn("'No price is shown here. Open the link for the live price.'", html)
+        # not found in this search is not "Hence does not list it"
+        self.assertIn("'No market matched this search.'", html)
+        self.assertIn('if (value.coverage) card.appendChild', html)
+        self.assertIn("'Nothing here places a trade: you trade in Hence.'", html)
+        # a row is a link only when its address is a plain https one; the page still asks the host for nothing but to open it
+        self.assertIn("if (!linkTo(row, m.url)) row = el('div', 'mrow');", html)
+        self.assertEqual(len(re.findall(r"request\('ui/open-link'", html)), 1)
 
     def test_the_fields_it_draws_are_fields_the_tools_return(self):
         html = page()
