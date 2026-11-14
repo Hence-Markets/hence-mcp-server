@@ -194,6 +194,44 @@ def portfolio(value):
     if held is not None and state.get('complete') is not True:
         missing = ['%s on %s' % (text(u.get('wallet')), text(u.get('venue'))) for u in state.get('could_not_read') or [] if isinstance(u, dict)]
         out.append('  not complete: ' + ('could not read ' + ', '.join(missing) if missing else 'some wallets were not read'))
+    account_ = value.get('account') if isinstance(value.get('account'), dict) else None
+    if account_:
+        rows = [[text(w.get('wallet')), text(w.get('mode')), _exact(w.get('value_usd')), _exact(w.get('cash_available_usd')),
+                 ('could not read ' + ', '.join(str(u) for u in w['unread'])) if w.get('unread') else '']
+                for w in account_.get('wallets') or [] if isinstance(w, dict)]
+        if rows:
+            out.append('\nHyperliquid account\n' + table(rows, ['wallet', 'mode', 'value', 'cash available', '']))
+            out.append('  total value: %s   total cash available: %s%s' % (
+                _exact(account_.get('total_value_usd')), _exact(account_.get('total_cash_available_usd')),
+                '' if account_.get('complete') is True else '   (not complete: a total is stated only when every wallet was read)'))
+    held_outcomes = value.get('outcome_positions') if isinstance(value.get('outcome_positions'), dict) else None
+    if held_outcomes:
+        listed = held_outcomes.get('positions')
+        if listed is None:
+            out.append('\nOutcome positions: %s (they could not be read)' % NA)
+        elif listed:
+            rows = [[text(o.get('market')), text(o.get('side')), count(o.get('contracts')), price(o.get('price')), _exact(o.get('value_usd')), text(o.get('wallet'))]
+                    for o in listed if isinstance(o, dict)]
+            out.append('\nOutcome positions\n' + table(rows, ['market', 'side', 'contracts', 'price', 'value', 'wallet']))
+    spot_ = value.get('spot') if isinstance(value.get('spot'), dict) else None
+    if spot_:
+        for w in spot_.get('wallets') or []:
+            if not isinstance(w, dict):
+                continue
+            out.append('\nSpot, wallet %s' % text(w.get('wallet')))
+            for key, label in (('tokens', 'tokens'), ('stablecoins', 'stablecoins'), ('other_assets', 'other coins (not counted as cash)')):
+                if key == 'other_assets' and key not in w:
+                    continue
+                rows_ = w.get(key)
+                if rows_ is None:
+                    out.append('  %s: %s (could not be read)' % (label, NA))
+                elif not rows_:
+                    out.append('  %s: none' % label)
+                else:
+                    out.append(table([[text(r.get('symbol')), text(r.get('chain')), ('%g' % r['amount']) if isinstance(r.get('amount'), (int, float)) else NA,
+                                       _exact(r.get('value_usd'))] for r in rows_ if isinstance(r, dict)], [label, 'chain', 'amount', 'value']))
+        out.append('  tokens value: %s   stablecoins value: %s%s' % (_exact(spot_.get('tokens_value_usd')), _exact(spot_.get('stablecoins_value_usd')),
+                                                                   '' if spot_.get('complete') is True else '   (not complete)'))
     results = value.get('trading_results')
     if not isinstance(results, dict):
         out.append('\nTrading results: %s (they could not be read)' % NA)
@@ -211,7 +249,8 @@ def portfolio(value):
     missing = [n for n in value.get('not_included') or [] if isinstance(n, str)]
     if missing:
         out.append('\nNot included (this is not the whole portfolio):\n' + '\n'.join('  - ' + n for n in missing))
-    extra = footer(value, {'open_positions', 'positions', 'trading_results', 'last_recorded_value', 'not_included', 'trading_results_days', 'as_of_ms'})
+    extra = footer(value, {'open_positions', 'positions', 'account', 'outcome_positions', 'spot', 'trading_results', 'last_recorded_value', 'not_included',
+                           'trading_results_days', 'as_of_ms'})
     return '\n'.join(out) + ('\n\n' + extra if extra else '')
 
 
