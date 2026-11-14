@@ -294,7 +294,7 @@ class Card(Case):
         self.assertIn('propose_trade', cards.TOOLS)
         self.assertIn('get_trade_proposals', cards.TOOLS)
         self.assertEqual(tools.public_definition(tools.TRADE_TOOLS[0])['_meta'], {'ui': {'resourceUri': 'ui://hence/thesis-card'}})
-        for said in ("basket ? 'Prepared basket' : 'Prepared trade'", "' · not placed'", "'Review and sign in Hence'", 'Nothing is placed until you sign it there.',
+        for said in ("basket ? 'Prepared basket' : purchase(p) ? 'Prepared purchase' : 'Prepared trade'", "' · not placed'", "'Review and sign in Hence'", 'Nothing is placed until you sign it there.',
                      "waiting: 'Waiting for you in Hence. Nothing has been placed.'", "'Nothing was prepared'",
                      "p.order.confirmed_by_venue === true ? 'You placed this order and it filled.' : 'You placed this order. Hence is confirming the fill with the venue.'"):
             self.assertTrue(said in html, said)
@@ -311,7 +311,7 @@ class Card(Case):
         self.assertTrue('answer.warnings' in html, 'answer.warnings')
         self.assertTrue('value.proposals' in html, 'value.proposals')
         # a basket: its thesis and the money put in, "not bought", and the same one button
-        for said in ("basket ? 'Prepared basket' : 'Prepared trade'", "' · not bought'", "'Amount put in'", 'Nothing is bought until you sign it there.'):
+        for said in ("basket ? 'Prepared basket' : purchase(p) ? 'Prepared purchase' : 'Prepared trade'", "' · not bought'", "'Amount put in'", 'Nothing is bought until you sign it there.'):
             self.assertTrue(said in html, said)
         got = shape.trade_propose(BASKET_PROPOSED)
         for field in ('kind', 'thesis', 'amount_usd', 'leverage', 'basket', 'status', 'url'):
