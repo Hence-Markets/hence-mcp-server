@@ -26,7 +26,7 @@ MIME = 'text/html;profile=mcp-app'
 # the tools whose answer the card can draw: one thesis, a list of them, what can be traded
 # (one market in full, or a list), or a prepared trade
 TOOLS = ('search_theses', 'get_thesis', 'get_featured_theses', 'search_markets', 'list_my_theses', 'get_my_thesis', 'propose_trade',
-         'get_trade_proposals')
+         'propose_basket', 'get_trade_proposals')
 
 _HTML = None
 

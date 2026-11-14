@@ -16,6 +16,7 @@
     hence research status <run>      how a research run is going
     hence research list              what is in progress and what recently finished
     hence trade propose perp:BTC long 200   prepare a trade to review and sign in Hence (places nothing)
+    hence trade basket <thesis> 500  prepare buying a thesis's basket, to review and sign in Hence (buys nothing)
     hence trade status <proposal>    what happened to it
     hence trade list                 the trades prepared from this terminal
     hence tools                      everything the server offers right now
@@ -116,7 +117,15 @@ def _parser():
     rsub.add_parser('list', help='what is in progress and what recently finished', parents=[common])
 
     trade = sub.add_parser('trade', help='prepare a trade to review and sign in Hence; it places nothing (needs hence login)', parents=[common])
-    xsub = trade.add_subparsers(dest='what', metavar='propose|status|list')
+    xsub = trade.add_subparsers(dest='what', metavar='propose|basket|status|list')
+    tbasket = xsub.add_parser('basket', help="prepare buying a thesis's basket; you review and sign it in Hence", parents=[common])
+    tbasket.add_argument('thesis', help='a thesis id, or its Hence link')
+    tbasket.add_argument('amount', type=float, help='the money put in, in US dollars')
+    tbasket.add_argument('--basket', choices=['perps', 'spot'], help="which of the thesis's baskets; leave out for its own")
+    tbasket.add_argument('--leverage', type=int, help='perpetual baskets only; leave out for none')
+    tbasket.add_argument('--note', help='why, in a sentence or two; shown in Hence beside the trade')
+    tbasket.add_argument('--valid-hours', type=int, help='how long you have to act on it (default 24, at most 72)')
+    tbasket.add_argument('--yes', action='store_true', help='do not ask before sending it to your Hence account')
     propose = xsub.add_parser('propose', help='prepare one perpetual order; you review and sign it in Hence', parents=[common])
     propose.add_argument('market', help='a market id from `hence markets`, such as perp:BTC or perp:xyz:NVDA')
     propose.add_argument('side', choices=['long', 'short'])
@@ -363,8 +372,27 @@ def run(argv, out=None, err=None, store=None, sender=None, open_browser=None, st
                 state = _call_signed_in(server, 'get_trade_proposals', {'proposal_id': found.group(0)}, store, sender)
                 print(render.show('get_trade_proposals', state, as_json=ns.json), file=out)
                 return 0
+            if ns.what == 'basket':
+                found = UUID.search(ns.thesis)
+                if not found:
+                    raise CliError('"%s" is not a thesis id or a Hence thesis link.' % ns.thesis)
+                request = {'thesis_id': found.group(0).lower(), 'amount_usd': int(ns.amount) if ns.amount == int(ns.amount) else ns.amount}
+                for key, value in (('basket', ns.basket), ('leverage', ns.leverage), ('note', ns.note), ('valid_for_hours', ns.valid_hours)):
+                    if value not in (None, ''):
+                        request[key] = value
+                if not ns.yes:
+                    print('Prepare for review in Hence: buy the basket of thesis %s with $%s%s' % (
+                        request['thesis_id'], ('%g' % ns.amount), (' at %dx' % ns.leverage) if ns.leverage is not None else ''), file=err)
+                    ask = confirm or (lambda: (stdin or sys.stdin).isatty() and input(
+                        'This buys nothing: it waits in Hence for you to review and sign. Send it? [y/N] ').strip().lower() in ('y', 'yes'))
+                    if not ask():
+                        raise CliError('Not sent. To send without being asked, add --yes.')
+                answer = _call_signed_in(server, 'propose_basket', request, store, sender)
+                print(render.show('propose_basket', answer, as_json=ns.json), file=out)
+                return 0 if answer.get('proposed') is True else 1
             if ns.what != 'propose':
-                raise CliError('Say `hence trade propose <market> <long|short> <size>`, `hence trade status <proposal>` or `hence trade list`.')
+                raise CliError('Say `hence trade propose <market> <long|short> <size>`, `hence trade basket <thesis> <amount>`, '
+                               '`hence trade status <proposal>` or `hence trade list`.')
             request = {'market_id': ns.market, 'side': ns.side, 'size_usd': int(ns.size) if ns.size == int(ns.size) else ns.size}
             if ns.leverage is not None:
                 request['leverage'] = ns.leverage

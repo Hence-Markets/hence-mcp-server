@@ -81,10 +81,13 @@ class Case(unittest.TestCase):
 
 class NothingHerePlacesAnOrder(Case):
     def test_the_tools_send_words_to_one_path_and_nothing_else(self):
-        self.assertEqual([t['name'] for t in tools.TRADE_TOOLS], ['propose_trade', 'get_trade_proposals'])
-        self.assertEqual([t['scope'] for t in tools.TRADE_TOOLS], ['trades:propose', 'trades:propose'])
-        # the one that writes is marked so a host asks the person; the other is a read
-        self.assertEqual([t['annotations']['readOnlyHint'] for t in tools.TRADE_TOOLS], [False, True])
+        self.assertEqual([t['name'] for t in tools.TRADE_TOOLS], ['propose_trade', 'propose_basket', 'get_trade_proposals'])
+        self.assertEqual([t['scope'] for t in tools.TRADE_TOOLS], ['trades:propose'] * 3)
+        # the two that write are marked so a host asks the person; the other is a read
+        self.assertEqual([t['annotations']['readOnlyHint'] for t in tools.TRADE_TOOLS], [False, False, True])
+        self.assertEqual(sorted(tools.PROPOSE_BASKET['properties']), ['amount_usd', 'basket', 'leverage', 'note', 'thesis_id', 'valid_for_hours'])
+        for arg in tools.PROPOSE_BASKET['properties']:
+            self.assertNotRegex(arg, r'(?i)wallet|address|user|account|key|signature|holding|weight|leg')      # the holdings are the thesis's own
         for t in tools.TRADE_TOOLS:
             self.assertIs(t['annotations']['destructiveHint'], False)
             self.assertNotRegex(t['name'], r'(place|execute|order|buy|sell|submit|sign|withdraw|transfer|send|deposit|fund|approve)')
@@ -116,7 +119,7 @@ class NothingHerePlacesAnOrder(Case):
         for part in ('does NOT place the trade', 'you cannot place one', 'review and sign it with their own wallet', 'Never say the trade was made',
                      'asked for this trade or agreed to it', 'search_markets first', 'not the margin', 'hence_fee'):
             self.assertIn(part, said, part)
-        reading = tools.TRADE_TOOLS[1]['description']
+        reading = tools.TRADE_TOOLS[2]['description']
         self.assertIn('Only `placed` means an order exists', reading)
         self.assertIn('may differ from what you proposed', reading)
 
@@ -224,6 +227,66 @@ class Following(Case):
         self.assertEqual(self.refusal('get_trade_proposals', {'proposal_id': PID}, gone), 'This connection has no proposal with that id.')
 
 
+THESIS = '11111111-1111-4111-8111-111111111111'
+BASKET_ASK = {'thesis_id': THESIS, 'amount_usd': 500, 'basket': 'perps', 'leverage': 2}
+
+
+def basket(**over):
+    p = {'proposal_id': PID, 'kind': 'basket', 'status': 'waiting', 'thesis_id': THESIS, 'thesis': 'Overfunded buildout', 'thesis_version': 3, 'basket': 'perps',
+         'amount_usd': 500.0, 'leverage': 2, 'note': None, 'created_at': '2026-11-14T11:00:00+00:00', 'expires_at': '2026-11-15T11:00:00+00:00', 'url': URL,
+         'what_now': 'Waiting for the person. Give them the link.'}
+    p.update(over)
+    return p
+
+
+BASKET_PROPOSED = {'ok': True, 'proposed': True, 'already_proposed': False, 'problems': [], 'warnings': [], 'proposal': basket(), 'hence_fee': FEE}
+
+
+class Baskets(Case):
+    def test_a_basket_is_sent_as_given_and_never_called_bought(self):
+        app = App({BASE: BASKET_PROPOSED}, scopes=ALL)
+        got = self.value('propose_basket', dict(BASKET_ASK, thesis_id=THESIS.upper()), app)
+        self.assertEqual(app.sent, [(BASE, BASKET_ASK)])                                   # the id goes on in the app's own lower case
+        p = got['proposal']
+        self.assertEqual((p['kind'], p['thesis'], p['thesis_version'], p['basket'], p['amount_usd'], p['leverage'], p['placed']),
+                         ('basket', 'Overfunded buildout', 3, 'perps', 500.0, 2, False))
+        for said in ('PREPARED, not bought', 'opens the thesis in Hence with the amount filled in', 'Do not say it was bought', 'get_my_portfolio'):
+            self.assertIn(said, got['next'], said)
+        said = tools.TRADE_TOOLS[1]['description']
+        for part in ('does NOT buy anything', 'review', 'sign it with their own wallet', 'holdings are the thesis\'s own', 'not the positions\' value',
+                     'Never say it was bought'):
+            self.assertIn(part, said, part)
+
+    def test_a_bad_id_asks_nothing_and_an_unreadable_answer_is_never_prepared(self):
+        app = App({BASE: BASKET_PROPOSED}, scopes=ALL)
+        self.assertIn('not a thesis id', self.refusal('propose_basket', dict(BASKET_ASK, thesis_id='../portfolio'), app))
+        self.assertIn('Unknown argument', self.refusal('propose_basket', dict(BASKET_ASK, holdings=[]), app))
+        self.assertEqual(app.sent, [])
+        for broken in (dict(BASKET_PROPOSED, proposal=basket(thesis_id='x')), dict(BASKET_PROPOSED, proposal=basket(amount_usd=None)),
+                       dict(BASKET_PROPOSED, proposal=basket(basket='solana')), dict(BASKET_PROPOSED, proposal=basket(kind='withdrawal')),
+                       # the app never calls a basket placed: one that claims to be is not passed on
+                       dict(BASKET_PROPOSED, proposal=basket(status='placed', order={'state': 'filled', 'confirmed_by_venue': True})),
+                       dict(BASKET_PROPOSED, proposal=proposal())):                          # an order answered to a basket request
+            self.assertIn('could not be read', self.refusal('propose_basket', BASKET_ASK, App({BASE: broken}, scopes=ALL)), repr(broken)[-80:])
+        bad = {'ok': False, 'proposed': False, 'warnings': [], 'problems': [{'field': 'thesis_id', 'problem': 'This thesis is followed on paper only: it has no basket to buy.'}]}
+        got = self.value('propose_basket', BASKET_ASK, App({BASE: bad}, scopes=ALL))
+        self.assertEqual((got['proposed'], got['problems'][0]['field']), (False, 'thesis_id'))
+
+    def test_it_needs_the_switch_and_the_permission(self):
+        app = App({BASE: BASKET_PROPOSED}, scopes=['account:read', 'theses:read'])
+        self.call('propose_basket', BASKET_ASK, app)
+        self.assertEqual(self.status, 403)
+        with mock.patch.dict(os.environ, {'HENCE_MCP_TRADES': '0'}):
+            self.assertIsNone(tools.find('propose_basket'))
+        self.assertEqual(app.sent, [])
+
+    def test_both_kinds_come_back_in_one_list(self):
+        rows = {'proposals': [basket(status='opened', what_now='The person opened it on the thesis page.'), proposal(kind='order')]}
+        got = self.value('get_trade_proposals', {}, App({BASE: rows}, scopes=ALL))
+        self.assertEqual([(p['kind'], p['status']) for p in got['proposals']], [('basket', 'opened'), ('order', 'waiting')])
+        self.assertNotIn('order', got['proposals'][0])
+
+
 class Card(Case):
     def test_the_card_draws_a_prepared_trade_and_never_calls_it_made(self):
         with open(os.path.join(HERE, '..', 'data', 'thesis-card.html'), encoding='utf-8') as f:
@@ -231,22 +294,29 @@ class Card(Case):
         self.assertIn('propose_trade', cards.TOOLS)
         self.assertIn('get_trade_proposals', cards.TOOLS)
         self.assertEqual(tools.public_definition(tools.TRADE_TOOLS[0])['_meta'], {'ui': {'resourceUri': 'ui://hence/thesis-card'}})
-        for said in ("'Prepared trade · not placed'", "'Review and sign in Hence'", 'Nothing is placed until you sign it there.',
+        for said in ("basket ? 'Prepared basket' : 'Prepared trade'", "' · not placed'", "'Review and sign in Hence'", 'Nothing is placed until you sign it there.',
                      "waiting: 'Waiting for you in Hence. Nothing has been placed.'", "'Nothing was prepared'",
                      "p.order.confirmed_by_venue === true ? 'You placed this order and it filled.' : 'You placed this order. Hence is confirming the fill with the venue.'"):
-            self.assertIn(said, html, said)
+            self.assertTrue(said in html, said)
         # the button is offered only while it can still be opened, and it only opens a link
-        self.assertIn("var open = p.status === 'waiting' || p.status === 'opened';", html)
+        self.assertTrue("var open = p.status === 'waiting' || p.status === 'opened';" in html, "var open = p.status === 'waiting' || p.status === 'opened';")
         self.assertNotRegex(html, r"request\('(tools/call|ui/message|ui/update-model-context)'")
         # every field the card reads is one the tools return
         got = shape.trade_propose(PROPOSED)
         for field in ('status', 'side', 'market', 'market_id', 'size_usd', 'leverage', 'order_type', 'limit_price', 'note', 'url'):
             self.assertIn(field, got['proposal'], field)
-            self.assertIn('p.' + field, html, field)
-        self.assertIn('answer.hence_fee.note', html)
-        self.assertIn("p.order_type === 'limit' ? 'Limit ' + px(p.limit_price) : 'Market'", html)        # a limit price shows its cents, or n/a
-        self.assertIn('answer.warnings', html)
-        self.assertIn('value.proposals', html)
+            self.assertTrue('p.' + field in html, 'p.' + field)
+        self.assertTrue('answer.hence_fee.note' in html, 'answer.hence_fee.note')
+        self.assertTrue("p.order_type === 'limit' ? 'Limit ' + px(p.limit_price) : 'Market'" in html, "p.order_type === 'limit' ? 'Limit ' + px(p.limit_price) : 'Market'")        # a limit price shows its cents, or n/a
+        self.assertTrue('answer.warnings' in html, 'answer.warnings')
+        self.assertTrue('value.proposals' in html, 'value.proposals')
+        # a basket: its thesis and the money put in, "not bought", and the same one button
+        for said in ("basket ? 'Prepared basket' : 'Prepared trade'", "' · not bought'", "'Amount put in'", 'Nothing is bought until you sign it there.'):
+            self.assertTrue(said in html, said)
+        got = shape.trade_propose(BASKET_PROPOSED)
+        for field in ('kind', 'thesis', 'amount_usd', 'leverage', 'basket', 'status', 'url'):
+            self.assertIn(field, got['proposal'], field)
+            self.assertTrue('p.' + field in html, 'p.' + field)
 
 
 class Command(unittest.TestCase):
@@ -273,7 +343,7 @@ class Command(unittest.TestCase):
             def post(account, path, payload):
                 return account.app.post(GRANT, path, payload)
         try:
-            value = (tools.propose_trade if name == 'propose_trade' else tools.get_trade_proposals)(args, None, Account(self.app))
+            value = {'propose_trade': tools.propose_trade, 'propose_basket': tools.propose_basket}.get(name, tools.get_trade_proposals)(args, None, Account(self.app))
             result = {'content': [{'type': 'text', 'text': json.dumps(value)}], 'structuredContent': value, 'isError': False}
         except (appauth.Unavailable, appauth.Refused, tools.ToolError) as e:
             result = {'content': [{'type': 'text', 'text': str(e)}], 'isError': True}
@@ -283,6 +353,21 @@ class Command(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         code = main.run(list(argv), out=out, err=err, store=self.store, sender=self.sender, confirm=confirm)
         return code, out.getvalue(), err.getvalue()
+
+    def test_basket_asks_first_sends_what_was_typed_and_prints_not_bought(self):
+        self.app = App({BASE: BASKET_PROPOSED}, scopes=ALL)
+        code, out, err = self.cli('trade', 'basket', THESIS, '500', '--leverage', '2', confirm=lambda: False)
+        self.assertEqual((code, out, self.app.sent), (1, '', []))
+        self.assertIn('buy the basket of thesis %s with $500 at 2x' % THESIS, err)
+        code, out, err = self.cli('trade', 'basket', 'https://app.hence.markets/t/' + THESIS, '500', '--basket', 'perps', '--leverage', '2', '--yes')
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.app.sent, [(BASE, BASKET_ASK)])
+        for said in ('Buy basket: Overfunded buildout  $500.00 at 2x  perps  [waiting]', 'Not bought.', 'review and sign in Hence: ' + URL):
+            self.assertIn(said, out, said)
+        self.assertNotRegex(out, r'(?i)\b(filled|executed|bought the|purchased)\b')
+        code, out, err = self.cli('trade', 'basket', 'not-a-thesis', '500', '--yes')
+        self.assertEqual((code, out), (1, ''))
+        self.assertIn('is not a thesis id', err)
 
     def test_propose_asks_first_and_no_sends_nothing(self):
         self.app = App({BASE: PROPOSED}, scopes=ALL)
