@@ -253,6 +253,15 @@ def _task_request(method, params, meta, headers, auth, log):
     return 'result', research_task(run)
 
 
+def _for_the_model(value):
+    """The answer as a model reads it: everything except what only the card draws
+    (shape.CARD_ONLY: a chart's points). The card gets the whole answer as structuredContent;
+    the text a model reads, and repeats to a person, carries the figures and not the line."""
+    if isinstance(value, dict) and shape.CARD_ONLY in value:
+        return {k: v for k, v in value.items() if k != shape.CARD_ONLY}
+    return value
+
+
 def _call_tool(params, upstream, log, headers=None, auth=None):
     """-> (result, None, None), (None, (code, message), None) or (None, None, challenge).
 
@@ -282,7 +291,7 @@ def _call_tool(params, upstream, log, headers=None, auth=None):
     try:
         value = tool['handler'](args, upstream, account) if scope else tool['handler'](args, upstream)
         outcome = 'ok'
-        result = {'content': [{'type': 'text', 'text': json.dumps(value, ensure_ascii=False, separators=(',', ':'))}],
+        result = {'content': [{'type': 'text', 'text': json.dumps(_for_the_model(value), ensure_ascii=False, separators=(',', ':'))}],
                   'structuredContent': value, 'isError': False}
     except appauth.NotConnected:
         auth.forget(bearer)     # the app says the connection is gone: stop remembering the token as good

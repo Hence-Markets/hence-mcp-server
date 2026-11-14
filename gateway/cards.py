@@ -12,11 +12,18 @@ How it fits together:
   - the host fetches that address with resources/read and gets one self-contained HTML page;
   - the host hands the page the tool's result, and the page draws it.
 
-The page is data/thesis-card.html. It loads nothing from anywhere (its content policy below is
-empty, which means "no network at all"), puts every value on the page as text and never as
-markup, and shows a figure that was not read as "n/a". A host with no support for cards
-ignores all of this: every tool still returns its full answer as text.
+The page is data/thesis-card.html. It loads ONE kind of thing: asset logos, as images, from
+Hence's own public address (the content policy below names that address under images and
+nothing under anything else). No script, font or stylesheet is loaded, and the page can call
+nothing: every figure it shows arrives from the host. It puts every value on the page as text
+and never as markup, and shows a figure that was not read as "n/a". A chat that allows no
+images still gets a whole card: each logo has a lettered tile under it. A host with no support
+for cards ignores all of this: every tool still returns its full answer as text.
+
+Until 2026-11-15 the page loaded nothing at all and looked like nothing in particular. It is
+now drawn in Hence's own look, with the logos people know the assets by.
 """
+import urllib.parse
 import os
 
 from . import config
@@ -50,6 +57,16 @@ def listing():
                             'for the person to review and sign in Hence, inside the conversation.', 'mimeType': MIME}]
 
 
+def image_origins():
+    """Where the card may load an image from: Hence's public address, and only when it is a
+    plain https one. A deployment whose public address is not https (a developer's laptop) gets
+    none, and the card shows its lettered tiles."""
+    u = urllib.parse.urlsplit(config.public_base())
+    if u.scheme != 'https' or not u.hostname or u.username or u.password:
+        return []
+    return ['https://' + u.netloc]
+
+
 def read(uri):
     """The resources/read answer for `uri`, or None when this server has no such resource.
     Raises OSError when the page cannot be read from disk."""
@@ -57,6 +74,7 @@ def read(uri):
         return None
     return {'contents': [{
         'uri': CARD, 'mimeType': MIME, 'text': html(),
-        # empty lists: the page may load and call nothing. Everything it shows arrives from the host.
-        '_meta': {'ui': {'csp': {'connectDomains': [], 'resourceDomains': [], 'frameDomains': [], 'baseUriDomains': []}, 'prefersBorder': False}},
+        # Images from Hence's own address (asset logos), and nothing else: no address the page may call, frame or
+        # be based on. Everything it shows as a figure arrives from the host.
+        '_meta': {'ui': {'csp': {'connectDomains': [], 'resourceDomains': image_origins(), 'frameDomains': [], 'baseUriDomains': []}, 'prefersBorder': False}},
     }]}

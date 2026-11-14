@@ -174,11 +174,21 @@ price history as figures, the checkpoints, and a button that opens it in Hence. 
 that return a thesis or a list of theses point at one page, `ui://hence/thesis-card`
 (`data/thesis-card.html`, served by `gateway/cards.py`).
 
-The page is self-contained. It loads nothing and calls nothing (its content policy is empty),
-puts every value on the page as text and never as markup, shows an unread figure as "n/a", and
-shows Hence's own sentence when a tool could not answer. The only thing it asks the host for
-is to open a link. A host without card support ignores it: every tool still returns its whole
-answer as text.
+The page is drawn in Hence's own look: its tri-dot mark, near-black surfaces, mono labels, green
+and red kept for money, and its iridescent gradient on one headline (a light chat gets the same
+card inverted). Price lines can be read by pointing at them, a holding explains why it is in the
+basket when pointed at, and a prepared trade counts down the time left to open it.
+
+It loads one kind of thing: asset logos, as images, from Hence's own public address (its content
+policy names that address for images and nothing for anything else). It loads no script, font or
+stylesheet, calls nothing, puts every value on the page as text and never as markup, shows an
+unread figure as "n/a", and shows Hence's own sentence when a tool could not answer. The only
+thing it asks the host for is to open a link, and nothing on it can be edited: a number changed
+in a chat would change nothing in Hence. A logo that does not load leaves a lettered tile. A
+host without card support ignores it: every tool still returns its whole answer as text.
+
+A thesis's chart points travel to the card only (`card` in the structured answer): the text a
+model reads carries the figures and not ninety pairs of numbers.
 
 The same page draws what can be traded (`search_markets`): one asset in full, with its price,
 24 hour change, funding, open interest and volume and a "Trade in Hence" button, or a list of

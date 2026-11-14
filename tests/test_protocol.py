@@ -77,7 +77,29 @@ class Modern(Base):
         r = out['result']
         self.assertEqual((r['resultType'], r['isError']), ('complete', False))
         self.assertEqual(r['structuredContent']['thesis_id'], T1)
-        self.assertEqual(json.loads(r['content'][0]['text']), r['structuredContent'])   # the text block is the same data
+        # The text block is the same data, less what only the card draws (2026-11-15: a thesis's chart points). A model
+        # reads the figures; ninety pairs of numbers it should never read out stay out of its text.
+        told, drawn = json.loads(r['content'][0]['text']), r['structuredContent']
+        self.assertEqual(told, {k: v for k, v in drawn.items() if k != 'card'})
+        self.assertNotIn('card', told)
+        self.assertEqual(sorted(drawn['card']), ['curve'])
+        line = drawn['card']['curve']
+        self.assertEqual(sorted(line), ['basket', 'benchmark', 'dates'])
+        self.assertEqual(len(line['dates']), len(line['basket']))
+        self.assertEqual(line['basket'][0], 100.0)                                     # the value of 100 put in at the start
+        self.assertEqual(told['performance'], drawn['performance'])                    # the figures a model may state are in both
+
+    def test_the_cards_line_is_drawn_only_from_whole_points(self):
+        from gateway import shape
+        row = lambda d, v, b: {'date': d, 'value': v, 'benchmark': b}
+        whole = shape.curve({'curve': [row('2026-08-15', 100.0, 100.0), row('2026-08-16', 100.114, 99.7098)]})
+        self.assertEqual(whole, {'dates': ['2026-08-15', '2026-08-16'], 'basket': [100.0, 100.11], 'benchmark': [100.0, 99.71]})
+        # a point with no value is dropped, never drawn at zero; a benchmark missing anywhere means no benchmark line at all
+        gaps = shape.curve({'curve': [row('2026-08-15', 100.0, 100.0), row('2026-08-16', None, 99.0), row('2026-08-17', 0, 99.0), row('2026-08-18', 101.0, None)]})
+        self.assertEqual(gaps, {'dates': ['2026-08-15', '2026-08-18'], 'basket': [100.0, 101.0], 'benchmark': None})
+        for none in ({}, None, {'curve': 'x'}, {'curve': []}, {'curve': [row('2026-08-15', 100.0, 100.0)]}, {'curve': [1, 'x', None]}):
+            self.assertIsNone(shape.curve(none), none)                                 # one point, or none, is not a line
+        self.assertEqual(len(shape.curve({'curve': [row('2026-01-01', 100.0 + i, 100.0) for i in range(900)]})['dates']), 400)   # bounded
 
     def test_a_tool_failure_is_a_result_the_model_can_read(self):
         status, out = self.run_(modern('tools/call', {'name': 'get_thesis', 'arguments': {'thesis_id': 'nope'}}, name='get_thesis'))

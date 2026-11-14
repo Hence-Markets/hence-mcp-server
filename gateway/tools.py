@@ -207,10 +207,14 @@ def get_thesis(args, up):
     # the result must say the figures are missing rather than leave them out silently.
     if want_perf:
         try:
-            perf = shape.performance(up.get_json(path + '/performance', {'days': days, 'live': 1}, ttl=300), days)
+            raw = up.get_json(path + '/performance', {'days': days, 'live': 1}, ttl=300)
+            perf = shape.performance(raw, days)
             if perf is None:
                 raise Unavailable('Hence gave an answer that could not be read')
             out['performance'] = perf
+            line = shape.curve(raw)
+            if line:
+                out[shape.CARD_ONLY] = {'curve': line}       # the chart's points: drawn by the card, not read out by a model
         except (Unavailable, NotFound, Expired) as e:
             out['performance'] = None
             out['performance_unavailable'] = 'The price history could not be read (%s). Do not state a return for this thesis.' % (
@@ -633,10 +637,14 @@ def get_my_thesis(args, up, account):
         # A second read. If it fails, or Hence says there is no history yet, the thesis is still
         # worth returning; the result says the figures are missing rather than leaving them out.
         try:
-            perf = shape.performance(_account_dict(account.get(path + '/performance', {'days': days}), 'price history'), days)
+            raw = _account_dict(account.get(path + '/performance', {'days': days}), 'price history')
+            perf = shape.performance(raw, days)
             if perf is None:
                 raise appauth.Unavailable('Hence gave an answer that could not be read')
             out['performance'] = perf
+            line = shape.curve(raw)
+            if line:
+                out[shape.CARD_ONLY] = {'curve': line}
         except (appauth.Unavailable, appauth.Refused, appauth.Busy) as e:
             out['performance'] = None
             out['performance_unavailable'] = 'The price history could not be read (%s). Do not state a return for this thesis.' % (

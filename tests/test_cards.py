@@ -46,11 +46,18 @@ class Served(unittest.TestCase):
             content = out['result']['contents'][0]
             self.assertEqual((status, content['uri'], content['mimeType'], content['text']), (200, cards.CARD, cards.MIME, page()), make.__name__)
 
-    def test_the_page_is_given_no_network_at_all(self):
+    def test_the_page_may_load_images_from_hence_and_reach_nothing_else(self):
+        # Until 2026-11-15 this policy was empty. The card now draws asset logos, so it may load an image from Hence's own
+        # public address. Still nowhere it may call, frame or be based on.
         _, out = self.run_(modern('resources/read', {'uri': cards.CARD}))
         csp = out['result']['contents'][0]['_meta']['ui']['csp']
-        self.assertEqual(csp, {'connectDomains': [], 'resourceDomains': [], 'frameDomains': [], 'baseUriDomains': []})
+        self.assertEqual(csp, {'connectDomains': [], 'resourceDomains': ['https://app.hence.markets'], 'frameDomains': [], 'baseUriDomains': []})
         self.assertNotIn('permissions', out['result']['contents'][0]['_meta']['ui'])          # no camera, microphone, location, clipboard
+        # only a plain https public address is ever named: anything else gets no image address at all
+        for base, allowed in (('https://app.hence.markets', ['https://app.hence.markets']), ('https://staging.hence.markets:8443/app', ['https://staging.hence.markets:8443']),
+                              ('http://127.0.0.1:4317', []), ('https://user:pw@app.hence.markets', []), ('ftp://app.hence.markets', []), ('nonsense', [])):
+            with mock.patch.dict(os.environ, {'HENCE_PUBLIC_BASE': base}):
+                self.assertEqual(cards.image_origins(), allowed, base)
 
     def test_an_unknown_resource_is_refused_and_nothing_else_is_readable(self):
         for uri in ('ui://hence/other', 'file:///etc/passwd', 'https://app.hence.markets/api/me', '../data/market-display.json', '', None, 7):
@@ -87,8 +94,21 @@ class Served(unittest.TestCase):
 
 
 class ThePage(unittest.TestCase):
-    def test_it_loads_and_calls_nothing(self):
+    def test_it_loads_asset_logos_from_hence_and_nothing_else_and_calls_nothing(self):
         html = page()
+        # THE ONE THING IT LOADS (2026-11-15): an asset's logo, as an image, made in one place, from Hence's own address
+        # (`home`: taken from the answer's own links, https only), tried in turn and then given up on. The tile under it stays.
+        self.assertEqual(html.count("document.createElement('img')"), 1)
+        self.assertEqual(len(re.findall(r'\bimg\.src\s*=', html)), 2)
+        self.assertEqual(html.count('img.src = home + ICON + from['), 2)                # never an address from the answer itself
+        self.assertIn("var home = null, ICON = '/api/icon?v=4&src=';", html)
+        self.assertIn("function origin(url) { var safe = hence(url), m = safe ? /^https:\/\/[^\/?#\s]+/.exec(safe) : null; return m ? m[0] : null; }", html)
+        self.assertIn('home = homeOf(value);', html)
+        self.assertIn("var from = home ? sources(id, sym) : [];", html)                  # no Hence address in the answer: no image is asked for
+        self.assertIn("img.referrerPolicy = 'no-referrer'", html)
+        self.assertIn("else if (img.parentNode) img.parentNode.removeChild(img);", html)  # a logo that does not load leaves the lettered tile
+        self.assertIn("var ok = /^[A-Za-z0-9._-]{1,24}$/", html)                          # only a plain ticker is ever put in an address
+        self.assertEqual(html.count('encodeURIComponent('), 6)
         self.assertNotRegex(html, r'<(script|link|img|iframe|video|audio|source|object|embed)\b[^>]*\b(src|href)\s*=')
         self.assertNotRegex(html, r'@import|url\(|@font-face')
         self.assertNotRegex(html, r'\bfetch\(|XMLHttpRequest|WebSocket|EventSource|sendBeacon|importScripts|new Worker')
@@ -176,3 +196,65 @@ class ThePage(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TheLook(unittest.TestCase):
+    """2026-11-15: the card is drawn in Hence's own look, and what moves on it changes nothing."""
+
+    def test_it_wears_hences_mark_and_its_one_gradient(self):
+        html = page()
+        # the tri-dot mark, built node by node, in the colour of the text beside it (white on black, black on white): never tinted
+        self.assertIn("[[9, 3], [3, 13], [15, 13]].forEach(function (at) {", html)
+        self.assertIn("dot.setAttribute('fill', 'currentColor');", html)
+        self.assertIn(".mark { width: 16px; height: 16px; flex: none; color: var(--text); }", html)
+        # the iridescent gradient is the landing page's own four stops, as a text fill and nowhere else
+        for stop in ('--g1: light-dark(#5b62d6, #9aa0f0);', '--g2: light-dark(#8a6fd0, #c9b6e8);', '--g3: light-dark(#c2743a, #f4c39a);', '--g4: light-dark(#b0865c, #f6e7d6);'):
+            self.assertIn(stop, html)
+        self.assertEqual(html.count('linear-gradient(95deg, var(--g1), var(--g2) 38%, var(--g3) 78%, var(--g4))'), 1)
+        self.assertIn('-webkit-background-clip: text; background-clip: text;', html)
+        # Hence's surfaces and money colours, and its white pill for the way in (black on a light chat)
+        for token in ('--bg: light-dark(#ffffff, #0e0f12);', '--up: light-dark(#17794a, #5fcf91);', '--down: light-dark(#bb3a2d, #f08d83);',
+                      '--cta-bg: light-dark(#0a0a0b, #f4f4f5);'):
+            self.assertIn(token, html)
+        self.assertNotRegex(html, r'#f0a868|#f6cba2')                                 # the old all-peach heading gradient is not Hence's highlight
+
+    def test_what_moves_on_the_card_changes_nothing(self):
+        html = page()
+        # nothing on it can be typed into or switched: a number changed in a chat would change nothing in Hence
+        self.assertNotRegex(html, r"el\('(input|select|textarea)'|createElement\('(input|select|textarea|form)'\)|contenteditable|<input|<select|<textarea|<form")
+        # a price line is read by pointing at it or with the arrow keys; the readout is text, like everything else
+        for said in ("wrap.addEventListener('pointermove', function (ev) {", "if (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') {", "box.appendChild(el('i', '', dates[at]));",
+                     "read(at).forEach(function (r, k) { box.appendChild(el(k ? 'span' : 'b', '', r)); });"):
+            self.assertIn(said, html, said)
+        # an explanation opens where the person points and is made of text nodes inside this page
+        for said in ("node.addEventListener('mouseenter', showTip); node.addEventListener('focus', showTip);", "if (tip.parentNode !== root) root.appendChild(tip);",
+                     "said.forEach(function (x) { tip.appendChild(el('span', '', x)); });"):
+            self.assertIn(said, html, said)
+        # the buttons it has only change what THIS page shows (more of a summary, a shorter window of the same line)
+        self.assertEqual(len(re.findall(r"el\('button'", html)), 2)
+        self.assertEqual(html.count("b.type = 'button';") + html.count("more.type = 'button';"), 2)
+        # time still running is said from the clock here and the time Hence gave; a time that could not be read says nothing
+        self.assertIn("if (!isNum(at)) return null;", html)
+        self.assertIn("if (s <= 0) return null;", html)
+
+    def test_a_thesiss_chart_is_drawn_only_from_the_points_hence_sent(self):
+        html = page()
+        self.assertIn("if ('performance' in t) performance(card, t, t.card && typeof t.card === 'object' ? t.card.curve : null);", html)
+        self.assertIn("curve.dates.length === curve.basket.length && curve.basket.length > 1 && curve.basket.every(isNum)", html)
+        self.assertIn("var bench = Array.isArray(curve.benchmark) && curve.benchmark.length === curve.basket.length && curve.benchmark.every(isNum) ? curve.benchmark : null;", html)
+        # no points: the three figures still show, and no line is made up
+        up = StubUpstream(standard_routes())
+        got = tools.get_thesis({'thesis_id': T1}, up)
+        self.assertEqual(sorted(got['card']['curve']), ['basket', 'benchmark', 'dates'])
+        self.assertEqual(shape.CARD_ONLY, 'card')
+
+    def test_a_spot_tokens_ticker_reaches_the_card_only_when_it_is_one(self):
+        base = {'proposal_id': 'pr_' + 'a' * 22, 'status': 'waiting', 'market_id': 'spot:4663:0x' + 'a' * 40, 'market': 'NVIDIA', 'side': 'long', 'size_usd': 50,
+                'leverage': None, 'order_type': 'market', 'limit_price': None, 'url': 'https://app.hence.markets/#/proposal/pr_x', 'what_now': 'Waiting.',
+                'kind': 'order', 'venue': 'spot'}
+        self.assertEqual(shape.trade_proposal(dict(base, symbol='NVDA'))['symbol'], 'NVDA')
+        for bad in ('', 'NV DA', '<b>', 'x' * 30, 7, None, ['NVDA']):
+            self.assertNotIn('symbol', shape.trade_proposal(dict(base, symbol=bad)), repr(bad))
+        perp = dict(base, market_id='perp:xyz:NVDA', venue='perp', leverage=3, symbol='NVDA')
+        self.assertNotIn('symbol', shape.trade_proposal(perp))                           # a perpetual is named by its market id
+        self.assertIn("p.venue === 'spot' ? (p.symbol || p.market) : p.market_id", page())

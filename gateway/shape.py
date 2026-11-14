@@ -249,6 +249,30 @@ def performance(p, period_days):
     return out
 
 
+CARD_ONLY = 'card'            # a top-level key of an answer that only the chat card draws (see protocol._for_the_model)
+
+
+def curve(p):
+    """The replay's line for the card's chart: {'dates', 'basket', 'benchmark'}, each point the
+    value of 100 put in at the start. None when there are fewer than two whole points: a line
+    is drawn from what the app computed, never from a point that is missing a side.
+
+    This is for the CARD only (CARD_ONLY). The figures a model may state are `performance`'s
+    own; ninety pairs of numbers add nothing a model should say and are left out of its text."""
+    rows = p.get('curve') if isinstance(p, dict) and isinstance(p.get('curve'), list) else []
+    dates, basket, bench = [], [], []
+    for r in rows[:400]:
+        if not isinstance(r, dict):
+            continue
+        d, v, b = text(r.get('date'), 10), num(r.get('value'), 2), num(r.get('benchmark'), 2)
+        if d is None or v is None or v <= 0:
+            continue
+        dates.append(d); basket.append(v); bench.append(b if b is not None and b > 0 else None)
+    if len(dates) < 2:
+        return None
+    return {'dates': dates, 'basket': basket, 'benchmark': bench if all(b is not None for b in bench) else None}
+
+
 # Hyperliquid's own perpetuals come from the app with no name, so a search for "bitcoin" matched
 # BVIV, IBIT and BITX by their names and missed BTC itself. The names of the major core
 # perpetuals, only where the name is not in doubt (XRP and BNB are their own names; a ticker
@@ -809,6 +833,7 @@ def research_list(data):
 # ── a trade prepared for the person ─────────────────────────────────────────────────────────
 PROPOSAL_RE = re.compile(r'^pr_[A-Za-z0-9_-]{22}$')
 _PROPOSAL_STATES = ('waiting', 'opened', 'placed', 'dismissed', 'expired', 'withdrawn')
+TICKER_RE = re.compile(r'^[A-Za-z0-9._-]{1,24}$')
 _PROPOSAL = ('proposal_id', 'status', 'market_id', 'market', 'side', 'size_usd', 'leverage', 'order_type', 'limit_price', 'note',
              'created_at', 'expires_at', 'url', 'what_now', 'market_closes_at')
 _ORDER_VENUES = ('perp', 'spot', 'outcome')            # which Hence ticket the order is for
@@ -852,6 +877,9 @@ def trade_proposal(data):
     out['kind'] = 'order'
     out['venue'] = venue
     out['size_usd'] = num(data['size_usd'])
+    # a spot token's ticker as Hence lists it (the card draws the token's logo from it): passed on only when it is a plain ticker
+    if venue == 'spot' and isinstance(data.get('symbol'), str) and TICKER_RE.match(data['symbol']):
+        out['symbol'] = data['symbol']
     if isinstance(order, dict):
         # 'pending' = sent from the ticket with no result yet (a purchase not yet confirmed on the chain): never passed on as filled
         if order.get('state') not in ('filled', 'resting', 'pending') or not isinstance(order.get('confirmed_by_venue'), bool):
