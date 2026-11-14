@@ -354,9 +354,14 @@ def _proposal(p):
         out.append('  note: ' + p['note'])
     order = p.get('order') if isinstance(p.get('order'), dict) else None
     if order:
-        # "pending" is sent with no result yet: it is printed as that, never as bought
-        out.append('  order: %s, %s, %s' % ('sent, not confirmed yet' if order.get('state') == 'pending' else text(order.get('state')), _exact(order.get('size_usd')),
-                                           'confirmed by the venue' if order.get('confirmed_by_venue') is True else 'not yet confirmed by the venue'))
+        # a token purchase is confirmed on the chain, an order by the venue; "pending" is sent with no result
+        # yet, printed as that and never as bought
+        where = 'on the chain' if p.get('venue') == 'spot' else 'by the venue'
+        if order.get('state') == 'pending':
+            out.append('  order: sent, %s, not confirmed yet' % _exact(order.get('size_usd')))
+        else:
+            out.append('  order: %s, %s, %s' % (text(order.get('state')), _exact(order.get('size_usd')),
+                                               ('confirmed ' if order.get('confirmed_by_venue') is True else 'not yet confirmed ') + where))
     else:
         out.append('  Not bought.' if basket else '  Not placed.')
     if p.get('status') in ('waiting', 'opened'):

@@ -225,10 +225,10 @@ class Shown(unittest.TestCase):
                        "Nothing is bought until you review it and sign it there."):
             self.assertIn(needle, self.card)
         # a probability is cents and a percentage, or n/a: never a dollar price and never 0
-        self.assertIn("function chance(v) { return isNum(v) && v > 0 && v < 1 ?", self.card)
+        self.assertIn("function chance(v) { return isNum(v) && v > 0 && v < 1 ? Math.round(v * 100) + '¢' : 'n/a'; }", self.card)
 
     def test_the_card_draws_an_outcome_side_with_what_it_pays_and_its_other_side(self):
-        for needle in ("if (m.kind === 'outcome') {", "It can only be bought: to take the other side, buy ", "isNum(m.price) ? 'price of one contract' : 'no quote right now'",
+        for needle in ("if (m.kind === 'outcome') {", "It can only be bought: to take the other side, buy ", "oquote.appendChild(el('span', 'na', implied(m.price)));", "'no quote right now'",
                        "var prof = value.profile, outcome = a['class'] === 'outcome';", "hist.change_points"):
             self.assertIn(needle, self.card)
 
@@ -247,7 +247,9 @@ class Shown(unittest.TestCase):
         self.assertNotIn('Long', shown)
         self.assertNotIn('market order', shown)
         sent = render.trade({'proposal': shape.trade_proposal(proposal(status='placed', order={'state': 'pending', 'size_usd': 50.0, 'confirmed_by_venue': False}))})
-        self.assertIn('sent, not confirmed yet', sent)
+        self.assertIn('order: sent, $50.00, not confirmed yet', sent)
+        bought = render.trade({'proposal': shape.trade_proposal(proposal(status='placed', order={'state': 'filled', 'size_usd': 50.0, 'confirmed_by_venue': True}))})
+        self.assertIn('order: filled, $50.00, confirmed on the chain', bought)
         with open(os.path.join(os.path.dirname(__file__), '..', 'hence_cli', 'main.py'), encoding='utf-8') as f:
             main = f.read()
         self.assertIn("propose.add_argument('side', choices=['long', 'short', 'buy']", main)

@@ -233,8 +233,10 @@
   /* A purchase (a spot token, or one side of an outcome market) is a buy and only a buy: it is never
      drawn with a direction, a leverage or an order type, because its ticket has none. */
   function purchase(p) { return p.kind !== 'basket' && (p.venue === 'spot' || p.venue === 'outcome'); }
-  // an outcome side's price is a probability from 0 to 1: shown as cents and a percentage, or n/a (never 0)
-  function chance(v) { return isNum(v) && v > 0 && v < 1 ? Math.round(v * 100) + '¢ · ' + Math.round(v * 100) + '%' : 'n/a'; }
+  // an outcome side's price is the price of one contract, from 0 to 1 dollar: shown in cents, or n/a (never 0)
+  function chance(v) { return isNum(v) && v > 0 && v < 1 ? Math.round(v * 100) + '¢' : 'n/a'; }
+  // ...and the same number read as the market's probability for that side
+  function implied(v) { return isNum(v) && v > 0 && v < 1 ? 'a contract · the market prices this side at about ' + Math.round(v * 100) + '%' : 'no quote right now'; }
   function stands(p) {
     if (p.status === 'placed' && p.order) {
       // sent is not bought: a purchase the chain has not confirmed can still fail
@@ -249,7 +251,8 @@
     var card = el('div', 'card');
     var open = p.status === 'waiting' || p.status === 'opened';
     var basket = p.kind === 'basket';
-    card.appendChild(el('div', 'eyebrow', (basket ? 'Prepared basket' : 'Prepared trade') + (open ? (basket ? ' · not bought' : ' · not placed') : '')));
+    var bought = basket || purchase(p);        // a basket and a purchase are bought; a perpetual order is placed
+    card.appendChild(el('div', 'eyebrow', (basket ? 'Prepared basket' : purchase(p) ? 'Prepared purchase' : 'Prepared trade') + (open ? (bought ? ' · not bought' : ' · not placed') : '')));
     var h = el('h1', '');
     if (basket) {
       h.appendChild(el('span', 'side long', 'Buy '));
@@ -345,7 +348,7 @@
       card.appendChild(el('div', 'by', [m.answer, m.side ? 'Side: ' + m.side : null, 'Outcome market'].filter(Boolean).join(' · ')));
       var oquote = el('div', 'quote');
       oquote.appendChild(el('b', '', chance(m.price)));
-      oquote.appendChild(el('span', 'na', isNum(m.price) ? 'price of one contract' : 'no quote right now'));
+      oquote.appendChild(el('span', 'na', implied(m.price)));
       card.appendChild(oquote);
       if (m.pays) card.appendChild(el('div', 'small', m.pays));
       card.appendChild(el('div', 'small', (m.closes_at ? 'Closes ' + String(m.closes_at).slice(0, 16).replace('T', ' ') + ' UTC. ' : '') + 'It can only be bought: to take the other side, buy ' + (m.other_side || 'the other side') + '.'));
@@ -461,7 +464,7 @@
       if (live) {
         var oq = el('div', 'quote');
         oq.appendChild(el('b', '', chance(live.price)));
-        oq.appendChild(el('span', 'na', isNum(live.price) ? 'price of one contract' : 'no quote right now'));
+        oq.appendChild(el('span', 'na', implied(live.price)));
         card.appendChild(oq);
       }
       if (prof && prof.pays) card.appendChild(el('div', 'small', prof.pays));
