@@ -219,7 +219,9 @@ def portfolio(value):
             if not isinstance(w, dict):
                 continue
             out.append('\nSpot, wallet %s' % text(w.get('wallet')))
-            for key, label in (('tokens', 'tokens'), ('stablecoins', 'stablecoins')):
+            for key, label in (('tokens', 'tokens'), ('stablecoins', 'stablecoins'), ('other_assets', 'other coins (not counted as cash)')):
+                if key == 'other_assets' and key not in w:
+                    continue
                 rows_ = w.get(key)
                 if rows_ is None:
                     out.append('  %s: %s (could not be read)' % (label, NA))
