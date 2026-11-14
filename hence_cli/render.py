@@ -272,6 +272,58 @@ def research(value):
     return '\n'.join(out)
 
 
+def _exact(v):
+    """A trade's size to the cent: never abbreviated, a person is about to sign for it."""
+    return ('$' + format(v, ',.2f')) if isinstance(v, (int, float)) and not isinstance(v, bool) else NA
+
+
+def _proposal(p):
+    head = '%s %s  %s%s  %s  [%s]' % (
+        'Short' if p.get('side') == 'short' else 'Long', text(p.get('market') or p.get('market_id')), _exact(p.get('size_usd')),
+        (' at %sx' % p['leverage']) if isinstance(p.get('leverage'), int) else '',
+        ('limit ' + price(p.get('limit_price'))) if p.get('order_type') == 'limit' else 'market order', text(p.get('status')))
+    out = [head]
+    if p.get('note'):
+        out.append('  note: ' + p['note'])
+    order = p.get('order') if isinstance(p.get('order'), dict) else None
+    if order:
+        out.append('  order: %s, %s, %s' % (text(order.get('state')), _exact(order.get('size_usd')),
+                                           'confirmed by the venue' if order.get('confirmed_by_venue') is True else 'not yet confirmed by the venue'))
+    else:
+        out.append('  Not placed.')
+    if p.get('status') in ('waiting', 'opened'):
+        out.append('  review and sign in Hence: %s' % text(p.get('url')))
+        out.append('  proposal: %s   expires: %s' % (text(p.get('proposal_id')), text(p.get('expires_at'))))
+    else:
+        # it can no longer be opened: the link is only where it is shown, not something to act on
+        out.append('  proposal: %s   in Hence: %s' % (text(p.get('proposal_id')), text(p.get('url'))))
+    if p.get('what_now'):
+        out.append('  ' + p['what_now'])
+    return '\n'.join(out)
+
+
+def trade(value):
+    """`propose_trade` and `get_trade_proposals`. A trade is shown as placed only when the
+    answer carries an order; everything else says "Not placed"."""
+    if isinstance(value.get('proposals'), list):
+        rows = [p for p in value['proposals'] if isinstance(p, dict)]
+        return '\n\n'.join(_proposal(p) for p in rows) if rows else 'No trades have been prepared from this terminal.'
+    problems = [p for p in value.get('problems') or [] if isinstance(p, dict)]
+    if problems:
+        return '\n'.join(['%d problem%s. Nothing was prepared.' % (len(problems), '' if len(problems) == 1 else 's')]
+                         + ['  %s%s' % ((p.get('field') + ': ') if p.get('field') else '', text(p.get('problem'))) for p in problems])
+    p = value.get('proposal') if isinstance(value.get('proposal'), dict) else value
+    out = [_proposal(p)]
+    warnings = [w for w in value.get('warnings') or [] if isinstance(w, str)]
+    if warnings:
+        out.append('\nWorth knowing:')
+        out += ['  - ' + w for w in warnings]
+    fee = value.get('hence_fee') if isinstance(value.get('hence_fee'), dict) else None
+    if fee and isinstance(fee.get('note'), str):
+        out.append('\n' + fee['note'])
+    return '\n'.join(out)
+
+
 def guide(value):
     return value.get('guide') if isinstance(value.get('guide'), str) else json.dumps(value, indent=2, ensure_ascii=False)
 
@@ -284,7 +336,7 @@ def tools(found):
 VIEWS = {'search_theses': theses, 'get_featured_theses': lambda v: theses(v, with_return=True), 'get_thesis': thesis,
          'search_markets': markets, 'get_my_account': account, 'list_my_theses': my_theses, 'get_my_thesis': my_thesis,
          'get_my_portfolio': portfolio, 'get_thesis_guide': guide, 'check_thesis': check, 'save_thesis_draft': check,
-         'start_thesis_research': research, 'get_thesis_research': research}
+         'start_thesis_research': research, 'get_thesis_research': research, 'propose_trade': trade, 'get_trade_proposals': trade}
 
 
 def show(tool, value, as_json=False):

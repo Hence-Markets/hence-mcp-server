@@ -73,6 +73,13 @@ def research_active():
     return accounts_active() and _env('HENCE_MCP_RESEARCH', '0') == '1'
 
 
+def trades_active():
+    """Whether the tools that prepare a trade for the person are offered. Its own switch; it must
+    match the app's AGENT_TRADES_ACTIVE, or the server would ask people for a permission the
+    app will not give. Preparing is all there is: no tool here places an order."""
+    return accounts_active() and _env('HENCE_MCP_TRADES', '0') == '1'
+
+
 def resource():
     """This server's own canonical address. A person's credential is issued for exactly this
     address, and a credential issued for any other is refused."""

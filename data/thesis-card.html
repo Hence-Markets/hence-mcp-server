@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hence thesis</title>
 <style>
-  /* A Hence thesis, or a list of them, drawn inside a chat (MCP Apps). Self-contained: no
+  /* A Hence thesis, a list of them, or a trade prepared for the person, drawn inside a chat (MCP Apps). Self-contained: no
      script, font, image or request leaves this page. Colours and type come from the host's
      variables, with fallbacks for a host that sends none. */
   :root {
@@ -200,6 +200,79 @@
     return card;
   }
 
+  /* A trade the agent PREPARED for the person. The card never says it was made: only the app's
+     own "placed" does, and then with whether the venue's record confirms it. The button opens
+     Hence, where the person's own order ticket is filled in and they review and sign. */
+  var STANDS = {
+    waiting: 'Waiting for you in Hence. Nothing has been placed.',
+    opened: 'You opened this in Hence. Nothing is known to have been placed.',
+    dismissed: 'You dismissed this. Nothing was placed.',
+    expired: 'This expired. Nothing was placed.',
+    withdrawn: 'The agent that prepared this is no longer connected, so it can no longer be opened. Nothing was placed.'
+  };
+  function usd(v) { return isNum(v) ? '$' + v.toLocaleString('en-US', { maximumFractionDigits: 2 }) : 'n/a'; }
+  // a price shows its cents from a dollar up ($139.50), and keeps its digits below one
+  function px(v) { return isNum(v) ? '$' + v.toLocaleString('en-US', { minimumFractionDigits: v >= 1 ? 2 : 0, maximumFractionDigits: v >= 100 ? 2 : v >= 1 ? 4 : 8 }) : 'n/a'; }
+  function stands(p) {
+    if (p.status === 'placed' && p.order) {
+      if (p.order.state === 'resting') return 'You placed this order. It is resting on the book.';
+      return p.order.confirmed_by_venue === true ? 'You placed this order and it filled.' : 'You placed this order. Hence is confirming the fill with the venue.';
+    }
+    return STANDS[p.status] || 'Hence did not say where this stands.';
+  }
+  function proposal(p, answer) {
+    var card = el('div', 'card');
+    var open = p.status === 'waiting' || p.status === 'opened';
+    card.appendChild(el('div', 'eyebrow', open ? 'Prepared trade · not placed' : 'Prepared trade'));
+    var h = el('h1', '');
+    h.appendChild(el('span', 'side ' + (p.side === 'short' ? 'short' : 'long'), p.side === 'short' ? 'Short ' : 'Long '));
+    h.appendChild(document.createTextNode(p.market || p.market_id || 'Unknown market'));
+    card.appendChild(h);
+    if (p.market && p.market_id) card.appendChild(el('div', 'by', p.market_id));
+    var figs = el('div', 'figs');
+    [['Position size', usd(p.size_usd)], ['Leverage', isNum(p.leverage) ? p.leverage + '×' : 'Your setting'],
+     ['Order', p.order_type === 'limit' ? 'Limit ' + px(p.limit_price) : 'Market']].forEach(function (f) {
+      var fig = el('div', 'fig'); fig.appendChild(el('b', '', f[1])); fig.appendChild(el('span', '', f[0])); figs.appendChild(fig);
+    });
+    card.appendChild(figs);
+    if (p.note) { card.appendChild(el('div', 'label', 'The agent\'s reason, in its own words')); card.appendChild(el('p', '', p.note)); }
+    card.appendChild(el('div', open ? 'small' : 'by', stands(p)));
+    if (answer && Array.isArray(answer.warnings)) answer.warnings.forEach(function (w) { if (typeof w === 'string' && w) card.appendChild(el('div', 'warnline', w)); });
+    if (open) {
+      var button = openButton(p.url, 'Review and sign in Hence');
+      if (button) card.appendChild(button);
+      card.appendChild(el('div', 'small', 'The order ticket opens filled in with these numbers. You can change any of them. Nothing is placed until you sign it there.'));
+      if (answer && answer.hence_fee && typeof answer.hence_fee.note === 'string') card.appendChild(el('div', 'small', answer.hence_fee.note));
+    }
+    return card;
+  }
+  function proposals(value) {
+    var card = el('div', 'card');
+    card.appendChild(el('div', 'eyebrow', 'Trades prepared for you'));
+    var rows = value.proposals.filter(function (p) { return p && typeof p === 'object'; });
+    if (!rows.length) card.appendChild(el('div', 'state', 'No trades have been prepared.'));
+    rows.forEach(function (p) {
+      var item = el('div', 'item');
+      var h = el('h2', '');
+      h.appendChild(el('span', 'side ' + (p.side === 'short' ? 'short' : 'long'), p.side === 'short' ? 'Short ' : 'Long '));
+      h.appendChild(document.createTextNode((p.market || p.market_id || 'Unknown market') + ' · ' + usd(p.size_usd) + (isNum(p.leverage) ? ' · ' + p.leverage + '×' : '')));
+      item.appendChild(h);
+      item.appendChild(el('p', '', stands(p)));
+      var button = p.status === 'waiting' || p.status === 'opened' ? openButton(p.url, 'Review in Hence') : null;
+      if (button) item.appendChild(button);
+      card.appendChild(item);
+    });
+    return card;
+  }
+  function refused(value) {
+    var card = el('div', 'card');
+    card.appendChild(el('div', 'eyebrow', 'Nothing was prepared'));
+    var ul = el('ul');
+    value.problems.forEach(function (x) { if (x && x.problem) ul.appendChild(el('li', '', (x.field ? x.field + ': ' : '') + x.problem)); });
+    card.appendChild(ul);
+    return card;
+  }
+
   // The host sizes the frame from this. Said after every draw, not only when a ResizeObserver
   // fires: a frame that is not being painted yet delivers no resize, and the card would stay
   // at its first height, cut off.
@@ -219,6 +292,10 @@
       return;
     }
     if (Array.isArray(value.theses)) show(list(value));
+    else if (value.proposal && typeof value.proposal === 'object' && value.proposed === true) show(proposal(value.proposal, value));
+    else if (value.proposed === false && Array.isArray(value.problems) && value.problems.length) show(refused(value));
+    else if (Array.isArray(value.proposals)) show(proposals(value));
+    else if (typeof value.proposal_id === 'string') show(proposal(value, null));
     else if (Array.isArray(value.holdings) || value.title) show(thesis(value));
     else show(el('div', 'card state', 'Nothing to show for this answer.'));
   }

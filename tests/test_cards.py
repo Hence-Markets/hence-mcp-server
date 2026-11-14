@@ -65,15 +65,17 @@ class Served(unittest.TestCase):
         self.assertIn('resources', out['result']['capabilities'])
 
     def test_thesis_tools_point_at_the_card_and_the_rest_do_not(self):
-        with mock.patch.dict(os.environ, dict(ON, HENCE_MCP_RESEARCH='1')):
+        with mock.patch.dict(os.environ, dict(ON, HENCE_MCP_RESEARCH='1', HENCE_MCP_TRADES='1')):
             _, out = self.run_(modern('tools/list'))
         listed = {t['name']: t.get('_meta') for t in out['result']['tools']}
         with_card = sorted(name for name, meta in listed.items() if meta)
         self.assertEqual(with_card, sorted(cards.TOOLS))
-        self.assertEqual(with_card, ['get_featured_theses', 'get_my_thesis', 'get_thesis', 'list_my_theses', 'search_theses'])
+        # theses, and a trade PREPARED for the person: its card says "not placed" and opens Hence (tests/test_trades.py)
+        self.assertEqual(with_card, ['get_featured_theses', 'get_my_thesis', 'get_thesis', 'get_trade_proposals', 'list_my_theses', 'propose_trade',
+                                     'search_theses'])
         for name in with_card:
             self.assertEqual(listed[name], {'ui': {'resourceUri': 'ui://hence/thesis-card'}})
-        # nothing that writes, and nothing about money, draws itself into a chat
+        # nothing else that writes, and nothing that reads the person's money, draws itself into a chat
         for name in ('save_thesis_draft', 'start_thesis_research', 'get_my_portfolio', 'get_my_account', 'check_thesis', 'search_markets'):
             self.assertIsNone(listed[name], name)
 

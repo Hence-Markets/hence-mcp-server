@@ -55,10 +55,12 @@ class ReadOnlyByConstruction(unittest.TestCase):
         self.assertNotRegex(requests_made[0], r"\bmethod\s*=")
         # the signed-in half reaches exactly these, and every one of them is a read of the person's own account
         self.assertEqual(appauth.INTROSPECT, '/api/agents/v1/introspect')
-        self.assertEqual(appauth.ACCOUNT_PATHS, ('/api/agents/v1/whoami', '/api/agents/v1/theses', '/api/agents/v1/portfolio', '/api/agents/v1/research'))
+        self.assertEqual(appauth.ACCOUNT_PATHS, ('/api/agents/v1/whoami', '/api/agents/v1/theses', '/api/agents/v1/portfolio', '/api/agents/v1/research',
+                                                 '/api/agents/v1/trades/proposals'))
         self.assertEqual([p.pattern for p in appauth.ACCOUNT_PATTERNS],
                          [r'^/api/agents/v1/theses/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(/performance)?$',
-                          r'^/api/agents/v1/research/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'])
+                          r'^/api/agents/v1/research/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+                          r'^/api/agents/v1/trades/proposals/pr_[A-Za-z0-9_-]{22}$'])
         ok = '11111111-1111-4111-8111-111111111111'
         for good in ('/api/agents/v1/whoami', '/api/agents/v1/theses/' + ok, '/api/agents/v1/theses/%s/performance' % ok):
             self.assertTrue(appauth.allowed(good), good)
@@ -75,18 +77,25 @@ class ReadOnlyByConstruction(unittest.TestCase):
         # wrote, to be checked or to be put in their library as a private DRAFT. Neither path
         # creates a thesis, publishes one or touches money. A third path here is a decision.
         # ... and a request for Hence to research an idea: the person's own run, under their own daily limit.
-        self.assertEqual(appauth.WRITE_PATHS, ('/api/agents/v1/theses/check', '/api/agents/v1/theses/drafts', '/api/agents/v1/research'))
+        # ... and a trade PREPARED for the person: words Hence stores, which fill in the person's own
+        # order ticket when they open it. The path is a list of proposals, not an order endpoint:
+        # the person reviews and signs every trade in Hence (tests/test_trades.py).
+        self.assertEqual(appauth.WRITE_PATHS, ('/api/agents/v1/theses/check', '/api/agents/v1/theses/drafts', '/api/agents/v1/research',
+                                               '/api/agents/v1/trades/proposals'))
         self.assertIn("if path not in WRITE_PATHS:\n            raise ValueError", code)
         self.assertLess(code.index('if path not in WRITE_PATHS:'), code.index("self._call('POST', path, grant, body)"))
         for path in appauth.WRITE_PATHS:
-            self.assertNotRegex(path, r'(trade|order|exchange|fill|withdraw|transfer|deposit|fund|sign|publish|visibility)')
+            # "trades/proposals" is the one place the word may appear: a proposal is not an order
+            self.assertNotRegex(path.replace('/trades/proposals', '/proposals'),
+                                r'(trade|order|exchange|fill|withdraw|transfer|deposit|fund|sign|publish|visibility)')
         self.assertIn("if not allowed(path):\n            raise ValueError", code)
         self.assertLess(code.index('if not allowed(path):'), code.index("self._call('GET', target, grant, None)"))
 
     def test_signed_in_tools_read_except_the_one_that_saves_a_draft(self):
-        writers = [t['name'] for t in tools.ACCOUNT_TOOLS + tools.RESEARCH_TOOLS if t['annotations']['readOnlyHint'] is not True]
-        # a third tool that changes anything is a decision made here: one saves a draft, one starts the person's own research run
-        self.assertEqual(writers, ['save_thesis_draft', 'start_thesis_research'])
+        writers = [t['name'] for t in tools.ACCOUNT_TOOLS + tools.RESEARCH_TOOLS + tools.TRADE_TOOLS if t['annotations']['readOnlyHint'] is not True]
+        # another tool that changes anything is a decision made here: one saves a draft, one starts the person's own
+        # research run, one PREPARES a trade for the person to review and sign in Hence (it places nothing)
+        self.assertEqual(writers, ['save_thesis_draft', 'start_thesis_research', 'propose_trade'])
         research = tools.RESEARCH_TOOLS[0]
         self.assertEqual((research['scope'], [t['name'] for t in tools.RESEARCH_TOOLS]), ('theses:research', ['start_thesis_research']))
         for said in ('counts toward the person\'s daily research limit', 'ask them first', '20 to 40 minutes', 'get_thesis_guide'):
