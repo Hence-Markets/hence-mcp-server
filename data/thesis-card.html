@@ -234,9 +234,20 @@
      drawn with a direction, a leverage or an order type, because its ticket has none. */
   function purchase(p) { return p.kind !== 'basket' && (p.venue === 'spot' || p.venue === 'outcome'); }
   // an outcome side's price is the price of one contract, from 0 to 1 dollar: shown in cents, or n/a (never 0)
-  function chance(v) { return isNum(v) && v > 0 && v < 1 ? Math.round(v * 100) + '¢' : 'n/a'; }
-  // ...and the same number read as the market's probability for that side
-  function implied(v) { return isNum(v) && v > 0 && v < 1 ? 'a contract · the market prices this side at about ' + Math.round(v * 100) + '%' : 'no quote right now'; }
+  // (a price under 1 cent or over 99 keeps a decimal: 0.126 cents rounded to "0¢" would read as "free")
+  function chance(v) {
+    if (!(isNum(v) && v > 0 && v < 1)) return 'n/a';
+    var c = v * 100;
+    return (c < 1 || c > 99 ? (Math.round(c * 10) / 10) : Math.round(c)) + '¢';
+  }
+  /* ...and what that price means. Only a price read from the order book itself, quoted closely (the asset view:
+     `checked`), is called what the market prices the side at. A figure from the market LIST is the middle of
+     whatever is resting, and the middle of a book nobody quotes (bid 0.1¢, ask 99.6¢) once read as a 50% chance
+     on a strike far from the price: it is called what it is. */
+  function implied(v, checked) {
+    if (!(isNum(v) && v > 0 && v < 1)) return 'no quote right now';
+    return checked ? 'a contract · the market prices this side at about ' + Math.round(v * 100) + '%' : 'a contract · middle of the order book, as listed';
+  }
   function stands(p) {
     if (p.status === 'placed' && p.order) {
       // sent is not bought: a purchase the chain has not confirmed can still fail
@@ -464,9 +475,12 @@
       if (live) {
         var oq = el('div', 'quote');
         oq.appendChild(el('b', '', chance(live.price)));
-        oq.appendChild(el('span', 'na', implied(live.price)));
+        oq.appendChild(el('span', 'na', implied(live.price, true)));
         card.appendChild(oq);
+        // the book as read: its best bid and ask, and why there is no price when they are far apart
+        if (isNum(live.bid) || isNum(live.ask)) card.appendChild(el('div', 'small', 'Best bid ' + chance(live.bid) + ' · best ask ' + chance(live.ask)));
       }
+      if (q && q.note) card.appendChild(el('div', 'warnline', q.note));
       if (prof && prof.pays) card.appendChild(el('div', 'small', prof.pays));
       if (prof && prof.other_side && prof.other_side.market_id) card.appendChild(el('div', 'small', 'It can only be bought: to take the other side, buy ' + prof.other_side.market_id + (prof.other_side.side ? ' (' + prof.other_side.side + ')' : '') + '.'));
     } else if (live || ref) {

@@ -159,7 +159,9 @@ def _arguments(ns):
     """(tool name, arguments) for the command typed. Options left out are not sent, so the
     server's own defaults apply."""
     def some(**kw):
-        return {k: v for k, v in kw.items() if v not in (None, '', False)}
+        # by identity, not equality: 0 == False in Python, so `--limit 0` was dropped as "not given" and the
+        # server's default answered instead of its refusal. A 0 typed is a 0 sent.
+        return {k: v for k, v in kw.items() if v is not None and v is not False and v != ''}
     if ns.command == 'theses':
         if ns.what == 'featured':
             return 'get_featured_theses', some(topic=ns.topic, limit=ns.limit)

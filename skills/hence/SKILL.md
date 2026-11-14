@@ -122,8 +122,9 @@ Start broad, then go deep: search first, then `get_thesis` on the one or two tha
       `search_markets` gave it (a Solana mint is case-sensitive), and tell the person the
       ticket shows which token and the live price before they sign.
     - **An outcome contract pays 1 dollar if its side is the result and nothing if not.** Say
-      that, and when the market closes, before you prepare one. Its price is a probability
-      from 0 to 1; a null price means the market had no usable quote, so do not state one.
+      that, and when the market closes, before you prepare one. Its price is the middle of
+      its order book, from 0 to 1. A null price means nobody quotes it closely or the book was
+      not read, so do not state one; `get_asset` reads the book (best bid and ask).
     - **"pending" is not bought.** A purchase the person sent but that is not confirmed yet
       comes back as state `pending` and can still fail. Say it was sent, not that they own it.
 11. **Research is what Hence read, not what you remember.** `get_asset` returns a section only

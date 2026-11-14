@@ -84,10 +84,10 @@ class Search(unittest.TestCase):
     def test_a_solana_read_that_failed_is_said(self):
         for config in ({'solanaSpot': True, 'solanaResearch': False}, {'solanaSpot': False, 'solanaResearch': True}, DOWN, {}, 'x'):
             out = tools.search_markets({'query': 'nvda'}, StubUpstream(routes(**{'/api/solana/assets': DOWN, '/api/config': config})))
-            self.assertIn('solana', out['incomplete'], repr(config))                   # a config that could not be read is not "off"
+            self.assertIn('Solana spot could not be read', out['incomplete'], repr(config))   # a config that could not be read is not "off"
         for wrong in ({}, {'assets': 'x'}, [], 'x'):
             out = tools.search_markets({'query': 'nvda'}, StubUpstream(routes(**{'/api/solana/assets': wrong})))
-            self.assertIn('solana', out['incomplete'], repr(wrong))
+            self.assertIn('Solana spot could not be read', out['incomplete'], repr(wrong))
 
     def test_every_list_that_was_read_failing_is_an_error(self):
         every = {'/api/screener/spot': DOWN, '/api/solana/assets': DOWN, '/api/config': {'solanaSpot': True, 'solanaResearch': True}}
@@ -96,7 +96,8 @@ class Search(unittest.TestCase):
         self.assertIn('No markets were read', str(ctx.exception))
         # Robinhood Chain down, Solana up: a partial answer that says so, with the Solana rows
         out = tools.search_markets({'kind': 'spot', 'query': 'tsla'}, StubUpstream(routes(**{'/api/screener/spot': DOWN})))
-        self.assertIn('spot could not be read', out['incomplete'])
+        # the list that failed is named: "spot could not be read" beside Solana spot rows read as a contradiction
+        self.assertEqual(out['incomplete'], 'Not all markets were searched: Robinhood Chain spot could not be read.')
         self.assertEqual(sorted(self.solana(out)), ['TSLA'])
 
 

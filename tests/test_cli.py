@@ -636,8 +636,14 @@ class Source(unittest.TestCase):
                 self.assertNotRegex(line, r'token|verifier|secret', line)
 
     def test_the_network_is_reached_in_one_place(self):
-        hits = [name for name, text in self.files().items() if 'urlopen(' in text]
+        # through one opener that never follows a redirect: urllib's default would re-send the person's
+        # credential to wherever a Location points, another host or plain http included
+        hits = [name for name, text in self.files().items() if '_OPENER.open(' in text]
         self.assertEqual(hits, ['client.py'])
+        self.assertEqual([name for name, text in self.files().items() if 'urlopen(' in text], [])
+        client = self.files()['client.py']
+        self.assertIn('def redirect_request(self, req, fp, code, msg, headers, newurl):\n        return None', client)
+        self.assertIn('_OPENER = urllib.request.build_opener(_NoRedirect)', client)
 
 
 if __name__ == '__main__':

@@ -56,11 +56,23 @@ def check_server(url):
     return urllib.parse.urlunsplit((p.scheme, p.netloc, p.path.rstrip('/') or '', p.query, ''))
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect is an answer, never followed: urllib would re-send the request's headers (the person's
+    credential, or this server's signature) to wherever the Location points, another host or plain http included."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def send(url, method, headers, body, timeout):
-    """-> (status, body bytes, headers with lower-case names). Raises Unreachable."""
+    """-> (status, body bytes, headers with lower-case names). Raises Unreachable. A redirect comes back
+    as its own 3xx status: it is never followed."""
     req = urllib.request.Request(url, data=body, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _OPENER.open(req, timeout=timeout) as r:
             return r.status, r.read(), {k.lower(): v for k, v in r.headers.items()}
     except urllib.error.HTTPError as e:
         return e.code, (e.read() if hasattr(e, 'read') else b''), {k.lower(): v for k, v in (e.headers.items() if e.headers else [])}

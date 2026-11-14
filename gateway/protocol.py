@@ -203,7 +203,8 @@ def _connect(scope, headers, auth):
     except appauth.NotConnected:
         return None, bearer, _challenge(401, scope, 'invalid_token', 'This agent is not connected to a Hence account. Connect it again.'), None
     except appauth.Unavailable as e:
-        return None, bearer, None, '%s. Your account was not read; try again shortly.' % e
+        # the sign-in check itself did not answer: nothing was read or sent, the account included
+        return None, bearer, None, '%s. Nothing was read or done; try again shortly.' % e
     if scope not in conn['scopes']:
         return None, bearer, _challenge(403, scope, 'insufficient_scope', 'This needs a permission you have not given this agent.'), None
     return _Account(auth, conn['grant']), bearer, None, None
@@ -297,8 +298,9 @@ def _call_tool(params, upstream, log, headers=None, auth=None):
         outcome = 'refused:%s' % e.code
         result = _refusal(str(e))
     except appauth.Unavailable as e:
+        # named for what this tool reads or does: a thesis-service failure is not "your account was not read"
         outcome = 'unavailable'
-        result = _refusal('%s. Your account was not read; try again shortly.' % e)
+        result = _refusal('%s. %s Please try again shortly.' % (e, tool.get('unread') or 'Nothing was read.'))
     except tools.ToolError as e:
         outcome = 'refused'
         result = {'content': [{'type': 'text', 'text': str(e)}], 'isError': True}

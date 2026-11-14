@@ -26,9 +26,19 @@ PID = 'pr_' + 'a' * 22
 HISTORY = {'ok': True, 'points': [{'t': 1793000000 + i * 86400, 'p': 0.5 + i * 0.01} for i in range(12)]}
 
 
+# each side's order book, by its coin: #12120/#12121 quoted closely, Team A's books empty on one side
+BOOKS = {'#12120': (0.61, 0.63), '#12121': (0.37, 0.39), '#3000': (0.69, 0.71), '#3001': (None, 0.31)}
+
+
+def book(query):
+    bid, ask = BOOKS.get(query['coin'], (None, None))
+    return {'ok': True, 'coin': query['coin'], 'bid': bid, 'ask': ask}
+
+
 def routes(**over):
     r = standard_routes()
     r['/api/hip4/history'] = HISTORY
+    r['/api/hip4/quote'] = book
     r.update(over)
     return r
 
@@ -98,7 +108,7 @@ class Search(unittest.TestCase):
             tools.search_markets({'kind': 'outcome'}, StubUpstream(down))
         self.assertIn('No markets were read', str(ctx.exception))
         out = tools.search_markets({'query': 'btc'}, StubUpstream(down))
-        self.assertIn('outcome could not be read', out['incomplete'])
+        self.assertIn('outcome markets could not be read', out['incomplete'])
         for wrong in ({'ok': True}, {'ok': False, 'events': []}, {'events': []}, [], 'x'):
             with self.assertRaises(tools.ToolError, msg=repr(wrong)):
                 tools.search_markets({'kind': 'outcome'}, StubUpstream(routes(**{'/api/hip4/events': wrong})))
@@ -116,11 +126,14 @@ class Asset(unittest.TestCase):
         up = StubUpstream(routes())
         out = tools.get_asset({'id': 'hip4:1212:0'}, up)
         # settled events too, so a market that has closed reads as closed; and the SIDE's own coin for the line
-        self.assertEqual(up.calls, [('/api/hip4/events', {'all': '1'}), ('/api/hip4/history', {'coin': '#12120', 'tf': '1d', 'hours': '720'})])
+        self.assertEqual(up.calls, [('/api/hip4/events', {'all': '1'}), ('/api/hip4/history', {'coin': '#12120', 'tf': '1d', 'hours': '720'}),
+                                    ('/api/hip4/quote', {'coin': '#12120'}), ('/api/hip4/quote', {'coin': '#12121'})])
         self.assertEqual(out['asset'], {'id': 'hip4:1212:0', 'symbol': 'BTC above $100,000 on Dec 31 · Yes', 'class': 'outcome', 'tradeable_on_hence': True,
                                         'markets': [{'market_id': 'hip4:1212:0', 'venue': 'Hyperliquid outcome market', 'url': BASE + '/#/terminal/o/o1212'}],
                                         'reference_ticker': None})
-        self.assertEqual(out['quote']['venues'], [{'market_id': 'hip4:1212:0', 'price': 0.62, 'other_side_price': 0.38}])
+        # the price is the middle of the side's own book, read just now; the other side's is from ITS book
+        self.assertEqual(out['quote']['venues'], [{'market_id': 'hip4:1212:0', 'price': 0.62, 'bid': 0.61, 'ask': 0.63, 'other_side_price': 0.38}])
+        self.assertNotIn('note', out['quote'])
         self.assertEqual((len(out['history']['points']), out['history']['points'][0]['close'], out['history']['change_points']), (12, 0.5, 11.0))
         self.assertRegex(out['history']['points'][0]['date'], r'^\d{4}-\d{2}-\d{2}$')
         self.assertEqual(out['profile']['other_side'], {'market_id': 'hip4:1212:1', 'side': 'No'})
@@ -135,11 +148,12 @@ class Asset(unittest.TestCase):
             self.assertIsNone(out['history'], repr(failed))
             self.assertEqual(out['unavailable'], ['history'])
             self.assertEqual(out['quote']['venues'][0]['price'], 0.38)
+            self.assertEqual(out['quote']['venues'][0]['other_side_price'], 0.62)
 
     def test_company_research_does_not_exist_for_an_outcome_market(self):
         up = StubUpstream(routes())
         out = tools.get_asset({'id': 'hip4:300:0', 'sections': ['quote', 'analysts', 'insiders', 'news']}, up)
-        self.assertEqual([c[0] for c in up.calls], ['/api/hip4/events'])                    # the price line was not asked for: not read
+        self.assertEqual([c[0] for c in up.calls], ['/api/hip4/events', '/api/hip4/quote', '/api/hip4/quote'])   # the price line was not asked for: not read
         self.assertEqual((out['not_applicable'], out['unavailable']), (['analysts', 'insiders', 'news'], []))
         self.assertEqual([out[k] for k in ('analysts', 'insiders', 'news')], [None, None, None])
         self.assertNotIn('history', out)
@@ -225,7 +239,9 @@ class Shown(unittest.TestCase):
                        "Nothing is bought until you review it and sign it there."):
             self.assertIn(needle, self.card)
         # a probability is cents and a percentage, or n/a: never a dollar price and never 0
-        self.assertIn("function chance(v) { return isNum(v) && v > 0 && v < 1 ? Math.round(v * 100) + '¢' : 'n/a'; }", self.card)
+        # never 0 for a price that is not one, and never "0¢" for a price under a cent (2026-11-14: a 0.126 cent bid read as free)
+        self.assertIn("if (!(isNum(v) && v > 0 && v < 1)) return 'n/a';", self.card)
+        self.assertIn("return (c < 1 || c > 99 ? (Math.round(c * 10) / 10) : Math.round(c)) + '¢';", self.card)
 
     def test_the_card_draws_an_outcome_side_with_what_it_pays_and_its_other_side(self):
         for needle in ("if (m.kind === 'outcome') {", "It can only be bought: to take the other side, buy ", "oquote.appendChild(el('span', 'na', implied(m.price)));", "'no quote right now'",
