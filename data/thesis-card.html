@@ -237,15 +237,23 @@
   function proposal(p, answer) {
     var card = el('div', 'card');
     var open = p.status === 'waiting' || p.status === 'opened';
-    card.appendChild(el('div', 'eyebrow', open ? 'Prepared trade · not placed' : 'Prepared trade'));
+    var basket = p.kind === 'basket';
+    card.appendChild(el('div', 'eyebrow', (basket ? 'Prepared basket' : 'Prepared trade') + (open ? (basket ? ' · not bought' : ' · not placed') : '')));
     var h = el('h1', '');
-    h.appendChild(el('span', 'side ' + (p.side === 'short' ? 'short' : 'long'), p.side === 'short' ? 'Short ' : 'Long '));
-    h.appendChild(document.createTextNode(p.market || p.market_id || 'Unknown market'));
+    if (basket) {
+      h.appendChild(el('span', 'side long', 'Buy '));
+      h.appendChild(document.createTextNode(p.thesis || 'a thesis'));
+    } else {
+      h.appendChild(el('span', 'side ' + (p.side === 'short' ? 'short' : 'long'), p.side === 'short' ? 'Short ' : 'Long '));
+      h.appendChild(document.createTextNode(p.market || p.market_id || 'Unknown market'));
+    }
     card.appendChild(h);
-    if (p.market && p.market_id) card.appendChild(el('div', 'by', p.market_id));
+    if (!basket && p.market && p.market_id) card.appendChild(el('div', 'by', p.market_id));
     var figs = el('div', 'figs');
-    [['Position size', usd(p.size_usd)], ['Leverage', isNum(p.leverage) ? p.leverage + '×' : 'Your setting'],
-     ['Order', p.order_type === 'limit' ? 'Limit ' + px(p.limit_price) : 'Market']].forEach(function (f) {
+    (basket ? [['Amount put in', usd(p.amount_usd)], ['Leverage', isNum(p.leverage) && p.leverage > 1 ? p.leverage + '×' : 'None'],
+               ['Basket', p.basket === 'perps' ? 'Perpetuals' : p.basket === 'spot' ? 'Spot tokens' : 'Its own']]
+            : [['Position size', usd(p.size_usd)], ['Leverage', isNum(p.leverage) ? p.leverage + '×' : 'Your setting'],
+               ['Order', p.order_type === 'limit' ? 'Limit ' + px(p.limit_price) : 'Market']]).forEach(function (f) {
       var fig = el('div', 'fig'); fig.appendChild(el('b', '', f[1])); fig.appendChild(el('span', '', f[0])); figs.appendChild(fig);
     });
     card.appendChild(figs);
@@ -255,7 +263,8 @@
     if (open) {
       var button = openButton(p.url, 'Review and sign in Hence');
       if (button) card.appendChild(button);
-      card.appendChild(el('div', 'small', 'The order ticket opens filled in with these numbers. You can change any of them. Nothing is placed until you sign it there.'));
+      card.appendChild(el('div', 'small', basket ? 'The thesis opens with this amount filled in. The holdings are the thesis\'s own. Nothing is bought until you sign it there.'
+        : 'The order ticket opens filled in with these numbers. You can change any of them. Nothing is placed until you sign it there.'));
       if (answer && answer.hence_fee && typeof answer.hence_fee.note === 'string') card.appendChild(el('div', 'small', answer.hence_fee.note));
     }
     return card;
@@ -268,8 +277,13 @@
     rows.forEach(function (p) {
       var item = el('div', 'item');
       var h = el('h2', '');
-      h.appendChild(el('span', 'side ' + (p.side === 'short' ? 'short' : 'long'), p.side === 'short' ? 'Short ' : 'Long '));
-      h.appendChild(document.createTextNode((p.market || p.market_id || 'Unknown market') + ' · ' + usd(p.size_usd) + (isNum(p.leverage) ? ' · ' + p.leverage + '×' : '')));
+      if (p.kind === 'basket') {
+        h.appendChild(el('span', 'side long', 'Buy '));
+        h.appendChild(document.createTextNode((p.thesis || 'a thesis') + ' · ' + usd(p.amount_usd) + (isNum(p.leverage) && p.leverage > 1 ? ' · ' + p.leverage + '×' : '')));
+      } else {
+        h.appendChild(el('span', 'side ' + (p.side === 'short' ? 'short' : 'long'), p.side === 'short' ? 'Short ' : 'Long '));
+        h.appendChild(document.createTextNode((p.market || p.market_id || 'Unknown market') + ' · ' + usd(p.size_usd) + (isNum(p.leverage) ? ' · ' + p.leverage + '×' : '')));
+      }
       item.appendChild(h);
       item.appendChild(el('p', '', stands(p)));
       var button = p.status === 'waiting' || p.status === 'opened' ? openButton(p.url, 'Review in Hence') : null;

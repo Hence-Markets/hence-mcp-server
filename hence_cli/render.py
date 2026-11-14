@@ -278,10 +278,17 @@ def _exact(v):
 
 
 def _proposal(p):
-    head = '%s %s  %s%s  %s  [%s]' % (
-        'Short' if p.get('side') == 'short' else 'Long', text(p.get('market') or p.get('market_id')), _exact(p.get('size_usd')),
-        (' at %sx' % p['leverage']) if isinstance(p.get('leverage'), int) else '',
-        ('limit ' + price(p.get('limit_price'))) if p.get('order_type') == 'limit' else 'market order', text(p.get('status')))
+    basket = p.get('kind') == 'basket'
+    if basket:
+        head = 'Buy basket: %s  %s%s%s  [%s]' % (
+            text(p.get('thesis')), _exact(p.get('amount_usd')),
+            (' at %sx' % p['leverage']) if isinstance(p.get('leverage'), int) and p['leverage'] > 1 else '',
+            ('  %s' % p['basket']) if p.get('basket') else '', text(p.get('status')))
+    else:
+        head = '%s %s  %s%s  %s  [%s]' % (
+            'Short' if p.get('side') == 'short' else 'Long', text(p.get('market') or p.get('market_id')), _exact(p.get('size_usd')),
+            (' at %sx' % p['leverage']) if isinstance(p.get('leverage'), int) else '',
+            ('limit ' + price(p.get('limit_price'))) if p.get('order_type') == 'limit' else 'market order', text(p.get('status')))
     out = [head]
     if p.get('note'):
         out.append('  note: ' + p['note'])
@@ -290,7 +297,7 @@ def _proposal(p):
         out.append('  order: %s, %s, %s' % (text(order.get('state')), _exact(order.get('size_usd')),
                                            'confirmed by the venue' if order.get('confirmed_by_venue') is True else 'not yet confirmed by the venue'))
     else:
-        out.append('  Not placed.')
+        out.append('  Not bought.' if basket else '  Not placed.')
     if p.get('status') in ('waiting', 'opened'):
         out.append('  review and sign in Hence: %s' % text(p.get('url')))
         out.append('  proposal: %s   expires: %s' % (text(p.get('proposal_id')), text(p.get('expires_at'))))
@@ -336,7 +343,7 @@ def tools(found):
 VIEWS = {'search_theses': theses, 'get_featured_theses': lambda v: theses(v, with_return=True), 'get_thesis': thesis,
          'search_markets': markets, 'get_my_account': account, 'list_my_theses': my_theses, 'get_my_thesis': my_thesis,
          'get_my_portfolio': portfolio, 'get_thesis_guide': guide, 'check_thesis': check, 'save_thesis_draft': check,
-         'start_thesis_research': research, 'get_thesis_research': research, 'propose_trade': trade, 'get_trade_proposals': trade}
+         'start_thesis_research': research, 'get_thesis_research': research, 'propose_trade': trade, 'propose_basket': trade, 'get_trade_proposals': trade}
 
 
 def show(tool, value, as_json=False):

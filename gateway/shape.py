@@ -461,6 +461,8 @@ PROPOSAL_RE = re.compile(r'^pr_[A-Za-z0-9_-]{22}$')
 _PROPOSAL_STATES = ('waiting', 'opened', 'placed', 'dismissed', 'expired', 'withdrawn')
 _PROPOSAL = ('proposal_id', 'status', 'market_id', 'market', 'side', 'size_usd', 'leverage', 'order_type', 'limit_price', 'note',
              'created_at', 'expires_at', 'url', 'what_now')
+_BASKET = ('proposal_id', 'status', 'thesis_id', 'thesis', 'thesis_version', 'basket', 'amount_usd', 'leverage', 'note',
+           'created_at', 'expires_at', 'url', 'what_now')
 NOT_PLACED = 'Nothing has been placed. Only the person can place it, in Hence.'
 
 
@@ -470,13 +472,25 @@ def trade_proposal(data):
     this server never reports a trade the app did not."""
     if not isinstance(data, dict) or not PROPOSAL_RE.match(str(data.get('proposal_id') or '')) or data.get('status') not in _PROPOSAL_STATES:
         return None
-    if data.get('side') not in ('long', 'short') or num(data.get('size_usd')) is None or not text(data.get('market_id')) \
-            or not text(data.get('url')) or not text(data.get('what_now')):
+    if not text(data.get('url')) or not text(data.get('what_now')):
         return None
     order = data.get('order')
     if (data['status'] == 'placed') != isinstance(order, dict):
         return None
+    if data.get('kind') == 'basket':
+        # buying a thesis's basket: an amount and a leverage. The app never calls one placed.
+        if not UUID_RE.match(str(data.get('thesis_id') or '')) or not text(data.get('thesis')) or num(data.get('amount_usd')) is None \
+                or num(data.get('leverage')) is None or order is not None or data.get('basket') not in (None, 'perps', 'spot'):
+            return None
+        out = {k: data.get(k) for k in _BASKET if data.get(k) is not None or k == 'basket'}
+        out.update(kind='basket', amount_usd=num(data['amount_usd']), placed=False)
+        return out
+    if data.get('kind') not in (None, 'order'):
+        return None                                  # a kind this server does not know is not passed on as an order
+    if data.get('side') not in ('long', 'short') or num(data.get('size_usd')) is None or not text(data.get('market_id')):
+        return None
     out = {k: data.get(k) for k in _PROPOSAL if data.get(k) is not None or k in ('leverage', 'limit_price')}
+    out['kind'] = 'order'
     out['size_usd'] = num(data['size_usd'])
     if isinstance(order, dict):
         if order.get('state') not in ('filled', 'resting') or not isinstance(order.get('confirmed_by_venue'), bool):
@@ -507,9 +521,13 @@ def trade_propose(data):
             'warnings': [text(w, 400) for w in data.get('warnings') or [] if text(w)],
             'proposal': proposal,
             'hence_fee': {'max_percent': num(fee.get('max_percent')), 'note': text(fee.get('note'), 400)},
-            'next': 'The trade is PREPARED, not placed. Give the person the url: they open it in Hence, the order ticket is filled in with '
-                    'these numbers, and they review and sign it there with their own wallet. They can change any number first. Tell them '
-                    'each warning. Do not say the trade was made. To learn what they did, call get_trade_proposals with this proposal_id.'}
+            'next': ('The basket is PREPARED, not bought. Give the person the url: it opens the thesis in Hence with the amount filled in, '
+                     'and they review the basket and sign it there with their own wallet. They can change the amount first. Tell them each '
+                     'warning. Do not say it was bought: Hence does not record whether a basket was bought from a proposal, so read '
+                     'get_my_portfolio for their positions.') if proposal.get('kind') == 'basket' else
+                    ('The trade is PREPARED, not placed. Give the person the url: they open it in Hence, the order ticket is filled in with '
+                     'these numbers, and they review and sign it there with their own wallet. They can change any number first. Tell them '
+                     'each warning. Do not say the trade was made. To learn what they did, call get_trade_proposals with this proposal_id.')}
 
 
 def trade_list(data):

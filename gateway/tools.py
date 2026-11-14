@@ -675,6 +675,20 @@ PROPOSE_TRADE = {
         'valid_for_hours': {'type': 'integer', 'minimum': 1, 'maximum': 72, 'description': 'How long the person has to act on it. Leave out for 24.'},
     },
 }
+PROPOSE_BASKET = {
+    'type': 'object',
+    'additionalProperties': False,
+    'required': ['thesis_id', 'amount_usd'],
+    'properties': {
+        'thesis_id': {'type': 'string', 'description': 'A thesis the person can open: one of theirs (list_my_theses) or a public one (search_theses).'},
+        'amount_usd': {'type': 'number', 'minimum': 10, 'maximum': 100000,
+                       'description': 'The money put into the basket, in US dollars and whole cents. With leverage the positions are worth more than this.'},
+        'basket': {'type': 'string', 'enum': ['perps', 'spot'], 'description': 'Which of the thesis\'s baskets. Leave out and the thesis opens on its own.'},
+        'leverage': {'type': 'integer', 'minimum': 1, 'maximum': 20, 'description': 'Perpetual baskets only. Leave out for none. The ticket lowers it to what the basket\'s markets allow.'},
+        'note': {'type': 'string', 'maxLength': 280, 'description': 'Why, in one or two sentences. The person sees it in Hence, marked as your words.'},
+        'valid_for_hours': {'type': 'integer', 'minimum': 1, 'maximum': 72, 'description': 'How long the person has to act on it. Leave out for 24.'},
+    },
+}
 GET_PROPOSALS = {
     'type': 'object',
     'additionalProperties': False,
@@ -687,6 +701,16 @@ def propose_trade(args, up, account):
     out = shape.trade_propose(account.post('/api/agents/v1/trades/proposals', args))
     if out is None:
         raise appauth.Unavailable('Hence gave an answer that could not be read (proposed trade). Ask again: the same request reaches the same proposal')
+    return out
+
+
+def propose_basket(args, up, account):
+    _unknown_keys(args, PROPOSE_BASKET)
+    if not shape.UUID_RE.match(_string(args, 'thesis_id', 64)):
+        raise ToolError('`thesis_id` is not a thesis id. Use the one a thesis tool returned.')
+    out = shape.trade_propose(account.post('/api/agents/v1/trades/proposals', dict(args, thesis_id=args['thesis_id'].lower())))
+    if out is None or (out.get('proposal') or {}).get('kind') not in (None, 'basket'):
+        raise appauth.Unavailable('Hence gave an answer that could not be read (proposed basket). Ask again: the same request reaches the same proposal')
     return out
 
 
@@ -816,11 +840,20 @@ TRADE_TOOLS = [
           'say it is waiting for them in Hence, give the url, and pass on every warning. Hence adds its fee to the '
           'order they sign; `hence_fee` says the most it can be.',
           PROPOSE_TRADE, propose_trade, scope='trades:propose', writes=True),
+    _tool('propose_basket', 'Prepare buying a thesis for the person',
+          'Prepare buying the basket of ONE thesis for the person to review and sign in Hence: the thesis, how much money '
+          'to put in, and optionally which basket (perps or spot) and a leverage. It does NOT buy anything and you cannot: '
+          'the person opens the returned url, the thesis page\'s own ticket is filled in with the amount, and they review '
+          'the basket and sign it with their own wallet. The holdings are the thesis\'s own; you cannot change them here. '
+          'Only when the person asked for this or agreed to it in this conversation. `amount_usd` is the money put in, '
+          'not the positions\' value. Never say it was bought: say it is waiting for them in Hence and give the url.',
+          PROPOSE_BASKET, propose_basket, scope='trades:propose', writes=True),
     _tool('get_trade_proposals', 'What happened to a prepared trade',
           'Where a trade you prepared stands: waiting, opened by the person, placed (with whether the venue\'s own '
           'record confirms the fill), dismissed, expired or withdrawn. Without a proposal_id, lists the trades you '
           'prepared for this person. Only `placed` means an order exists, and the order is what the person placed, '
-          'which may differ from what you proposed. For their positions, use get_my_portfolio.',
+          'which may differ from what you proposed. A basket is never reported as placed: Hence does not record that. '
+          'For their positions, use get_my_portfolio.',
           GET_PROPOSALS, get_trade_proposals, scope='trades:propose'),
 ]
 

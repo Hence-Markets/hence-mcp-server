@@ -21,7 +21,7 @@ https://mcp.hence.markets/mcp
 Tools: `search_theses`, `get_thesis`, `get_featured_theses`, `search_markets`, and, once the
 person has connected their Hence account, `get_my_account`, `list_my_theses`, `get_my_thesis`,
 `get_my_portfolio`, `check_thesis`, `save_thesis_draft`, `get_thesis_research` and, where they
-are switched on, `start_thesis_research`, `propose_trade` and `get_trade_proposals`.
+are switched on, `start_thesis_research`, `propose_trade`, `propose_basket` and `get_trade_proposals`.
 `get_thesis_guide` needs no account. Call
 `tools/list` for the current set: the server gains tools without this skill changing.
 
@@ -44,6 +44,7 @@ hence draft save thesis.json        # save it as a private draft in their librar
 hence research start "<idea>"       # ask Hence to research it (20 to 40 minutes; uses a daily run)
 hence research status <run>         # how a run is going
 hence trade propose perp:BTC long 200   # prepare a trade to review and sign in Hence; places nothing
+hence trade basket <thesis> 500     # prepare buying a thesis's basket; buys nothing
 hence trade status <proposal>       # what the person did with it
 hence tools                         # everything the server offers right now
 hence call <tool> --arg key=value   # any tool by name
@@ -68,6 +69,7 @@ Exit codes: `0` done; `1` Hence could not do it (the reason is on stderr and std
 | "What am I holding?" / "how have I traded?" | `get_my_portfolio` (needs sign-in) |
 | "Build me a basket for my view" / "make my thesis more defensive" | Write it yourself: read [write-a-thesis.md](write-a-thesis.md), then `check_thesis` and `save_thesis_draft` (needs sign-in) |
 | "Have Hence research this" | `start_thesis_research`, then `get_thesis_research` about ten minutes later (needs sign-in; ask first, it uses one of their daily runs) |
+| "Buy this thesis with 500" / "put 1,000 into that basket" | `propose_basket` with the thesis id and the amount, and give them the link (needs sign-in) |
 | "Go long X" / "short Y with 500" / "set that trade up for me" | `search_markets` for the market, then `propose_trade`, and give them the link. Later, `get_trade_proposals` for what they did (needs sign-in) |
 
 Start broad, then go deep: search first, then `get_thesis` on the one or two that fit.
@@ -99,14 +101,18 @@ Start broad, then go deep: search first, then `get_thesis` on the one or two tha
    about every ten minutes. When they want it now or want it their way, write the thesis
    yourself instead.
 10. **Nothing here places a trade or moves money.** You can prepare one perpetual order with
-    `propose_trade`: Hence stores it, the person opens the link, their own order ticket is
-    filled in, and they review and sign it with their own wallet. They can change any number
-    first. Prepare one only when the person asked for that trade or agreed to it.
+    `propose_trade`, or buying a thesis's basket with `propose_basket`: Hence stores it, the
+    person opens the link, their own ticket is filled in, and they review and sign it with
+    their own wallet. They can change any number first. Prepare one only when the person
+    asked for that trade or agreed to it. A basket's holdings are the thesis's own: to change
+    them, write a new thesis.
 11. **A prepared trade is not a trade.** Say "it is waiting for you in Hence" and give the
     link. Never say it was bought, sold, opened or filled. Only `get_trade_proposals` showing
     `placed` means an order exists, and that order is what they placed, which may differ from
-    what you prepared. `size_usd` is the position's value, not the margin. Pass on every
-    warning, and say that Hence's fee and the venue's fees are shown in the ticket.
+    what you prepared. A basket is never reported as placed: Hence does not record that, so
+    read `get_my_portfolio`. For an order `size_usd` is the position's value, not the margin;
+    for a basket `amount_usd` is the money put in. Pass on every warning, and say that
+    Hence's fee and the venue's fees are shown in the ticket.
 
 ## Signing in
 

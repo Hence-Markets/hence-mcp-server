@@ -29,9 +29,10 @@ person opens the returned link in Hence.
 | `search_markets` | What trades on Hence and where: perpetuals with live price, funding and open interest, and Robinhood Chain spot tokens |
 | `get_thesis_guide` | How to write a Hence thesis yourself: the method and the `hence-thesis/1` format |
 
-With sign-in switched on there are up to ten more, each touching only the connected person's own account.
-Three of them change something: `save_thesis_draft` leaves a draft, `start_thesis_research` starts the
-person's own research run, and `propose_trade` prepares a trade for the person to review and sign in Hence.
+With sign-in switched on there are up to eleven more, each touching only the connected person's own account.
+Four of them change something: `save_thesis_draft` leaves a draft, `start_thesis_research` starts the
+person's own research run, and `propose_trade` and `propose_basket` prepare a trade for the person to review
+and sign in Hence.
 None publishes on the agent's say-so, places an order, or moves money.
 
 | Tool | What it reads | Needs |
@@ -45,6 +46,7 @@ None publishes on the agent's say-so, places an order, or moves money.
 | `get_thesis_research` | The state of a Hence research run: what it is doing now, or the thesis once there is one. Without a run id, what is in progress and what recently finished | `theses:read` |
 | `start_thesis_research` | Asks Hence to research an idea for the person, steered by their guidance, must-include and exclude lists and venue. Takes 20 to 40 minutes and counts toward their daily limit. Offered only with `HENCE_MCP_RESEARCH=1` | `theses:research` |
 | `propose_trade` | Prepares one perpetual order (market, side, size, leverage, market or limit) for the person to review and sign in Hence. Places nothing. Offered only with `HENCE_MCP_TRADES=1` | `trades:propose` |
+| `propose_basket` | Prepares buying one thesis's basket: the thesis, the money put in, optionally which basket and a leverage. Buys nothing. Offered only with `HENCE_MCP_TRADES=1` | `trades:propose` |
 | `get_trade_proposals` | Where a prepared trade stands: waiting, opened, placed (and whether the venue's record confirms the fill), dismissed, expired or withdrawn. Offered only with `HENCE_MCP_TRADES=1` | `trades:propose` |
 
 Few tools on purpose. A caller pays for every tool description on every turn; the whole list
@@ -103,7 +105,13 @@ What this server can and cannot do:
   needs the venue's own fill record.
 - A proposal **expires** (a day by default, three at most) and stops being openable when the
   person dismisses it or disconnects the agent.
-- Perpetuals only for now. Spot tokens, outcome markets and thesis baskets are refused.
+- One perpetual order, or one thesis's basket. Single spot tokens and outcome markets are refused for now.
+
+`propose_basket` is the same idea for a thesis: the thesis id, the money to put in, and
+optionally which basket and a leverage. The link opens the thesis with the amount filled into
+its own ticket; the holdings are the thesis's own. Hence checks the thesis version again when
+the person opens it, and fills nothing if the thesis was revised since. A basket is never
+reported as bought, because the basket ticket's receipts carry no proposal id.
 
 Its own switch (`HENCE_MCP_TRADES`, which must match the app's `AGENT_TRADES_ACTIVE`) and its
 own permission, `trades:propose`.
@@ -157,6 +165,7 @@ hence research start "<idea>"       # ask Hence to research it (asks first; --wa
 hence research status <run>         # how a run is going
 hence research list                 # what is in progress and what recently finished
 hence trade propose perp:BTC long 200   # prepare a trade to review and sign in Hence (asks first; places nothing)
+hence trade basket <thesis> 500     # prepare buying a thesis's basket (asks first; buys nothing)
 hence trade status <proposal>       # what happened to it
 hence trade list                    # the trades prepared from this terminal
 hence tools                         # everything the server offers right now

@@ -95,7 +95,7 @@ class ReadOnlyByConstruction(unittest.TestCase):
         writers = [t['name'] for t in tools.ACCOUNT_TOOLS + tools.RESEARCH_TOOLS + tools.TRADE_TOOLS if t['annotations']['readOnlyHint'] is not True]
         # another tool that changes anything is a decision made here: one saves a draft, one starts the person's own
         # research run, one PREPARES a trade for the person to review and sign in Hence (it places nothing)
-        self.assertEqual(writers, ['save_thesis_draft', 'start_thesis_research', 'propose_trade'])
+        self.assertEqual(writers, ['save_thesis_draft', 'start_thesis_research', 'propose_trade', 'propose_basket'])
         research = tools.RESEARCH_TOOLS[0]
         self.assertEqual((research['scope'], [t['name'] for t in tools.RESEARCH_TOOLS]), ('theses:research', ['start_thesis_research']))
         for said in ('counts toward the person\'s daily research limit', 'ask them first', '20 to 40 minutes', 'get_thesis_guide'):
