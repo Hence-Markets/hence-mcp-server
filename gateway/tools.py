@@ -350,7 +350,8 @@ def search_markets(args, up):
         'prices_as_of_unix': as_of,
         'coverage': 'Perps on Hyperliquid and its builder venues, and spot tokens on Robinhood Chain. '
                     'Solana and Elysium tokens and prediction markets are in the Hence app but not in this search yet.',
-        'how_to_trade': 'Open a market\'s url in Hence to trade it. This server cannot place trades.',
+        'how_to_trade': 'Open a market\'s url in Hence to trade it. This server cannot place trades.'
+                        + (' It can prepare one perpetual order for the person to review and sign in Hence: propose_trade.' if config.trades_active() else ''),
     }
     if failed:
         # one of the two lists did not answer: say so, or a missing market reads as "not listed"
@@ -736,7 +737,8 @@ TOOLS = [
     _tool('search_markets', 'Search Hence markets',
           'Find what can be traded on Hence and where: perpetuals on Hyperliquid and its builder venues (crypto, '
           'stocks, indices, pre-IPO valuations, rates) with live price, 24h change, funding and open interest, and '
-          'spot tokens on Robinhood Chain. A null figure means it was not read, not that it is zero.',
+          'spot tokens on Robinhood Chain. A null figure means it was not read, not that it is zero. For one asset '
+          'in full, pass its ticker with `limit` 1.',
           SEARCH_MARKETS, search_markets),
     _tool('get_thesis_guide', 'How to write a Hence thesis',
           'Read this before writing a thesis yourself: the method (claim, mechanism, exposures, weights, sources, '
