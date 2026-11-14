@@ -332,11 +332,11 @@ def search_markets(args, up):
             if not isinstance(rows, list):
                 raise Unavailable('Hence gave an answer that could not be read')
             for row in rows:
-                m = shape.spot_market(row, base) if isinstance(row, dict) else None
+                m = shape.spot_market(row, base, config.spot_figures()) if isinstance(row, dict) else None
                 if m:
                     score = shape.match_score(query, m['symbol'], m['name'])
                     if score:
-                        found.append((score, 0, m))
+                        found.append((score, m.get('volume_24h_usd') or 0, m))
         except (Unavailable, NotFound, Expired) as e:
             failed['spot'] = str(e) if isinstance(e, Unavailable) else 'not available'
     wanted = [k for k in ('perp', 'spot') if kind in ('all', k)]
@@ -761,7 +761,8 @@ TOOLS = [
     _tool('search_markets', 'Search Hence markets',
           'Find what can be traded on Hence and where: perpetuals on Hyperliquid and its builder venues (crypto, '
           'stocks, indices, pre-IPO valuations, rates) with live price, 24h change, funding and open interest, and '
-          'spot tokens on Robinhood Chain. A null figure means it was not read, not that it is zero. For one asset '
+          'spot tokens on Robinhood Chain with price, 24h change, volume and liquidity from Hence\'s latest snapshot '
+          '(it can be hours old: say so). A null figure means it was not read, not that it is zero. For one asset '
           'in full, pass its ticker with `limit` 1.',
           SEARCH_MARKETS, search_markets),
     _tool('get_thesis_guide', 'How to write a Hence thesis',

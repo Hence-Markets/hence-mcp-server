@@ -73,6 +73,14 @@ def research_active():
     return accounts_active() and _env('HENCE_MCP_RESEARCH', '0') == '1'
 
 
+def spot_figures():
+    """Whether a spot token's price, 24 hour change, volume, liquidity and market cap are passed
+    on. They come from Hence's market snapshot, which Hence buys from a data vendor; the owner
+    decided (2026-11-14) that Hence's data is served to people's agents as it is to people. On
+    unless set to '0', so the figures can be withdrawn without a release if a vendor objects."""
+    return _env('HENCE_MCP_SPOT_FIGURES', '1') != '0'
+
+
 def trades_active():
     """Whether the tools that prepare a trade for the person are offered. Its own switch; it must
     match the app's AGENT_TRADES_ACTIVE, or the server would ask people for a permission the

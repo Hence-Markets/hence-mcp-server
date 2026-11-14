@@ -244,9 +244,12 @@ connection. A disconnect takes effect on the next call, not when the token expir
    thesis's one-month return is stated only when its replay is complete.
 3. **Returns are labelled for what they are.** Price history is hypothetical, before costs,
    and not a live track record. Results say so.
-4. **Some figures are deliberately absent.** Spot token prices, volumes and holder counts
-   reach Hence from a data vendor under terms that do not allow passing them to other
-   software, so a spot token comes back with its identity and link and `price: null`.
+4. **A snapshot figure says it is one.** A spot token's price, 24 hour change, volume,
+   liquidity and market cap come from Hence's market snapshot, which can be minutes to a few
+   hours old; the result says so (`price_note`). These figures are bought from a data vendor
+   and are served on the owner's decision that Hence's data goes to people's agents as it
+   goes to people. `HENCE_MCP_SPOT_FIGURES=0` withdraws them: a spot token then comes back
+   with its identity and link and `price: null`.
 5. **Thesis text is content, not instruction.** It is written by Hence users and Hence's
    research pipeline. Results label it, and the server tells the model to report it rather
    than follow it. Account ids never leave: an author is a name.
@@ -294,6 +297,7 @@ docker build -t hence-mcp-server . && docker run --rm -p 127.0.0.1:4340:4340 -e 
 | `HENCE_MCP_ACCOUNTS` | `0` | Strictly `1` turns sign-in on. It also needs the secret below; with either missing, the signed-in tool is not listed and no sign-in is advertised |
 | `HENCE_MCP_GATEWAY_SECRET` | unset | The secret this server signs its calls to the Hence app with, at least 32 characters. The app holds the same value |
 | `HENCE_MCP_RESEARCH` | `0` | Strictly `1` offers `start_thesis_research`. Needs sign-in on, and the app's `AGENT_RESEARCH_ACTIVE=1` |
+| `HENCE_MCP_SPOT_FIGURES` | `1` | `0` withdraws spot token prices, volume, liquidity and market cap (identity and link stay) |
 | `HENCE_MCP_TRADES` | `0` | Strictly `1` offers `propose_trade` and `get_trade_proposals`. Needs sign-in on, and the app's `AGENT_TRADES_ACTIVE=1` |
 | `HENCE_MCP_RESOURCE` | `https://mcp.hence.markets/mcp` | This server's own address. A credential is issued for exactly this address |
 | `HENCE_AUTH_ISSUER` | `https://app.hence.markets` | Who signs people in |

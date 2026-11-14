@@ -268,15 +268,20 @@ def perp_market(coin, row, names, public_base):
     }
 
 
-def spot_market(row, public_base):
-    """One spot token: what it is and where it trades. Its price, volume and holder counts come
-    to Hence from a data vendor whose terms do not let Hence pass them on to other software, so
-    they are deliberately absent here (not zero): the link shows them."""
+SPOT_SNAPSHOT_NOTE = ('From Hence\'s most recent market snapshot, which can be minutes to a few hours old. '
+                      'Open the link for the live price and liquidity.')
+
+
+def spot_market(row, public_base, figures=True):
+    """One spot token: what it is, where it trades and, when `figures` is on, its price, 24
+    hour change, volume, liquidity and market cap from Hence's market snapshot. A figure the
+    snapshot does not hold is None, never 0. With `figures` off (config.spot_figures) the
+    token comes back with its identity and link only: the figures are absent, not zero."""
     address = text(row.get('address'))
     chain = row.get('chainId')
     if not address or not isinstance(chain, int) or isinstance(chain, bool):
         return None
-    return {
+    out = {
         'market_id': 'spot:%s:%s' % (chain, address.lower()),
         'symbol': text(row.get('sym')),
         'name': text(row.get('name')),
@@ -288,6 +293,13 @@ def spot_market(row, public_base):
         'price_note': 'Open the link for live price and liquidity.',
         'url': rhc_url(public_base, address) if chain == 4663 else None,
     }
+    if figures:
+        out.update(price=num(row.get('price')), change_24h_pct=num(row.get('daily'), 2), volume_24h_usd=num(row.get('vol'), 0),
+                   liquidity_usd=num(row.get('liq'), 0), market_cap_usd=num(row.get('cap'), 0),
+                   # the snapshot sends the holder count as a float; a count that is not a number is unknown, never 0
+                   holders=int(num(row.get('holders'))) if num(row.get('holders')) is not None else None,
+                   price_note=SPOT_SNAPSHOT_NOTE)
+    return out
 
 
 def match_score(query, symbol, name):

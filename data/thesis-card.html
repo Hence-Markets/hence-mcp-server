@@ -332,6 +332,18 @@
       card.appendChild(figs);
       if (m.funding_apr_pct > 0) card.appendChild(el('div', 'small', 'Funding above zero: holders of a long position pay it, holders of a short receive it.'));
       else if (m.funding_apr_pct < 0) card.appendChild(el('div', 'small', 'Funding below zero: holders of a short position pay it, holders of a long receive it.'));
+    } else if (isNum(m.price)) {
+      // a spot token with figures from Hence's market snapshot: the same shape, and its own note on how old they can be
+      var squote = el('div', 'quote');
+      squote.appendChild(el('b', '', px(m.price)));
+      squote.appendChild(el('span', tone(m.change_24h_pct), pct(m.change_24h_pct) + ' in 24 hours'));
+      card.appendChild(squote);
+      var sfigs = el('div', 'figs');
+      [['Liquidity', big(m.liquidity_usd)], ['Traded in 24 hours', big(m.volume_24h_usd)], ['Market cap', big(m.market_cap_usd)]].forEach(function (f) {
+        var fig = el('div', 'fig'); fig.appendChild(el('b', '', f[1])); fig.appendChild(el('span', '', f[0])); sfigs.appendChild(fig);
+      });
+      card.appendChild(sfigs);
+      if (m.price_note) card.appendChild(el('div', 'small', m.price_note));
     } else {
       card.appendChild(el('p', 'state', m.price_note || 'No price is shown here. Open the link for the live price.'));
       if (m.contract) card.appendChild(el('div', 'small', 'Contract ' + m.contract));
@@ -361,8 +373,10 @@
       if (!linkTo(row, m.url)) row = el('div', 'mrow');
       row.appendChild(el('span', 'sym', m.symbol || '?'));
       row.appendChild(el('span', 'nm', [m.name, m.venue].filter(Boolean).join(' · ')));
-      row.appendChild(el('span', 'pr', m.kind === 'perp' ? px(m.price) : 'in Hence'));
-      row.appendChild(el('span', 'ch ' + (m.kind === 'perp' ? tone(m.change_24h_pct) : 'na'), m.kind === 'perp' ? pct(m.change_24h_pct) : ''));
+      // a price that was not passed on (a spot token with figures off) says where to see it, never a number
+      var priced = m.kind === 'perp' || isNum(m.price);
+      row.appendChild(el('span', 'pr', priced ? px(m.price) : 'in Hence'));
+      row.appendChild(el('span', 'ch ' + (priced ? tone(m.change_24h_pct) : 'na'), priced ? pct(m.change_24h_pct) : ''));
       card.appendChild(row);
     });
     if (isNum(value.matches) && value.matches > rows.length) card.appendChild(el('div', 'small', 'Showing ' + rows.length + ' of ' + value.matches + ' matches.'));
