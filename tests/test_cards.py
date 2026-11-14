@@ -71,8 +71,8 @@ class Served(unittest.TestCase):
         with_card = sorted(name for name, meta in listed.items() if meta)
         self.assertEqual(with_card, sorted(cards.TOOLS))
         # theses, and a trade PREPARED for the person: its card says "not placed" and opens Hence (tests/test_trades.py)
-        self.assertEqual(with_card, ['get_featured_theses', 'get_my_thesis', 'get_thesis', 'get_trade_proposals', 'list_my_theses', 'propose_basket',
-                                     'propose_trade', 'search_markets', 'search_theses'])
+        self.assertEqual(with_card, ['get_asset', 'get_featured_theses', 'get_my_thesis', 'get_thesis', 'get_trade_proposals', 'list_my_theses',
+                                     'propose_basket', 'propose_trade', 'search_markets', 'search_theses'])
         for name in with_card:
             self.assertEqual(listed[name], {'ui': {'resourceUri': 'ui://hence/thesis-card'}})
         # nothing else that writes, and nothing that reads the person's money, draws itself into a chat
@@ -143,7 +143,11 @@ class ThePage(unittest.TestCase):
         self.assertIn("if (!isNum(v)) return 'n/a';", html)                        # open interest and volume
         self.assertIn("minimumFractionDigits: v >= 1 ? 2 : 0, maximumFractionDigits: v >= 100 ? 2 : v >= 1 ? 4 : 8 }) : 'n/a'", html)   # a price
         # a spot token's price is not passed on by this server: the card says where to see it, never a number
-        self.assertIn("m.kind === 'perp' ? px(m.price) : 'in Hence'", html)
+        self.assertTrue("var priced = m.kind === 'perp' || isNum(m.price);" in html)
+        self.assertTrue("priced ? px(m.price) : 'in Hence'" in html)
+        self.assertTrue("} else if (isNum(m.price)) {" in html)                      # a spot token is drawn with figures only when it has a price
+        for field in ('liquidity_usd', 'market_cap_usd'):
+            self.assertTrue('m.' + field in html, field)
         self.assertIn("'No price is shown here. Open the link for the live price.'", html)
         # not found in this search is not "Hence does not list it"
         self.assertIn("'No market matched this search.'", html)

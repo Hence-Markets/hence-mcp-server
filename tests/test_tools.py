@@ -21,12 +21,22 @@ SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'gateway')
 class ReadOnlyByConstruction(unittest.TestCase):
     def test_every_tool_declares_itself_a_read(self):
         self.assertEqual([t['name'] for t in tools.TOOLS],
-                         ['search_theses', 'get_thesis', 'get_featured_theses', 'search_markets', 'get_thesis_guide'])
+                         ['search_theses', 'get_thesis', 'get_featured_theses', 'search_markets', 'get_asset', 'get_thesis_guide'])
         for t in tools.TOOLS:
             a = t['annotations']
             self.assertIs(a['readOnlyHint'], True, t['name'])
             self.assertIs(a['destructiveHint'], False, t['name'])
             self.assertNotRegex(t['name'], r'(trade|order|buy|sell|withdraw|transfer|send|deposit|fund|create|approve|sign)')
+
+    def test_the_image_check_pins_the_same_tool_list(self):
+        # CI builds the image and runs scripts/test_container.sh, which pins the public tool list
+        # too. It needs Docker, so it does not run with these tests: adding get_asset passed here
+        # and failed there. The two lists are compared here so the next tool fails before the push.
+        with open(os.path.join(SRC, '..', 'scripts', 'test_container.sh'), encoding='utf-8') as f:
+            script = f.read()
+        pinned = re.search(r"^assert names == \[([^\]]*)\], names$", script, re.M)
+        self.assertIsNotNone(pinned, 'the image check no longer pins the tool list')
+        self.assertEqual(re.findall(r"'([a-z_]+)'", pinned.group(1)), [t['name'] for t in tools.TOOLS])
 
     def test_the_gateway_only_ever_reads_the_app(self):
         # Two modules talk to the network, and each is boxed in:

@@ -27,6 +27,7 @@ person opens the returned link in Hence.
 | `get_thesis` | One thesis: the claim, holdings with weights and reasons, other baskets, sources, checkpoints, and a price history |
 | `get_featured_theses` | Today's featured selection |
 | `search_markets` | What trades on Hence and where: perpetuals with live price, funding and open interest, and Robinhood Chain spot tokens |
+| `get_asset` | Research on one asset: its live price on each venue, 90 days of daily prices, and for a listed company its profile, analyst ratings and targets, insider trades, earnings, headlines, fundamentals and Hence's own daily analysis. Also answers for a US-listed company Hence does not trade |
 | `get_thesis_guide` | How to write a Hence thesis yourself: the method and the `hence-thesis/1` format |
 
 With sign-in switched on there are up to eleven more, each touching only the connected person's own account.
@@ -81,6 +82,24 @@ It is the one tool that spends Hence's money, so it has its own switch (`HENCE_M
 which must match the app's `AGENT_RESEARCH_ACTIVE`), its own permission, and counts toward the
 person's daily research limit. The same request on the same day reaches the same run, so a
 retry never starts a second one.
+
+## Researching one asset
+
+`get_asset` is Hence as a research desk. It takes a market id from `search_markets` or a
+plain ticker and returns the sections asked for: `quote`, `history`, `profile`, `analysts`,
+`insiders`, `earnings`, `news`, `fundamentals`, `analysis`. Left out, it returns the first three.
+
+- It is one read of the app (`GET /api/research/asset`). The server passes on what it was
+  given by allowlist, and refuses an answer in which a section is null without the app saying
+  why (`unavailable`: it could not be read; `not_applicable`: it does not exist for this kind
+  of asset).
+- No argument is a date, a limit or a page: a caller cannot vary what the app asks its data
+  vendors for.
+- A company Hence does not trade is answered too, marked research only.
+- The card draws the price line from the daily closes it was given. Fewer than two points
+  draws no line.
+
+It needs the app's `ASSET_RESEARCH_ACTIVE=1`; without it the tool answers that nothing was found.
 
 ## Preparing a trade
 
@@ -152,6 +171,7 @@ hence theses search AI capex        # public theses about something
 hence theses featured               # today's featured theses
 hence thesis <id or link>           # one thesis in full
 hence markets nvda                  # what can be traded on Hence, and where
+hence asset perp:xyz:NVDA --all     # research on one asset: price, history, analysts, insiders, earnings, news
 hence login                         # connect this terminal to your Hence account
 hence whoami
 hence my theses                     # your own theses, private ones included
@@ -244,9 +264,12 @@ connection. A disconnect takes effect on the next call, not when the token expir
    thesis's one-month return is stated only when its replay is complete.
 3. **Returns are labelled for what they are.** Price history is hypothetical, before costs,
    and not a live track record. Results say so.
-4. **Some figures are deliberately absent.** Spot token prices, volumes and holder counts
-   reach Hence from a data vendor under terms that do not allow passing them to other
-   software, so a spot token comes back with its identity and link and `price: null`.
+4. **A snapshot figure says it is one.** A spot token's price, 24 hour change, volume,
+   liquidity and market cap come from Hence's market snapshot, which can be minutes to a few
+   hours old; the result says so (`price_note`). These figures are bought from a data vendor
+   and are served on the owner's decision that Hence's data goes to people's agents as it
+   goes to people. `HENCE_MCP_SPOT_FIGURES=0` withdraws them: a spot token then comes back
+   with its identity and link and `price: null`.
 5. **Thesis text is content, not instruction.** It is written by Hence users and Hence's
    research pipeline. Results label it, and the server tells the model to report it rather
    than follow it. Account ids never leave: an author is a name.
@@ -294,6 +317,7 @@ docker build -t hence-mcp-server . && docker run --rm -p 127.0.0.1:4340:4340 -e 
 | `HENCE_MCP_ACCOUNTS` | `0` | Strictly `1` turns sign-in on. It also needs the secret below; with either missing, the signed-in tool is not listed and no sign-in is advertised |
 | `HENCE_MCP_GATEWAY_SECRET` | unset | The secret this server signs its calls to the Hence app with, at least 32 characters. The app holds the same value |
 | `HENCE_MCP_RESEARCH` | `0` | Strictly `1` offers `start_thesis_research`. Needs sign-in on, and the app's `AGENT_RESEARCH_ACTIVE=1` |
+| `HENCE_MCP_SPOT_FIGURES` | `1` | `0` withdraws spot token prices, volume, liquidity and market cap (identity and link stay) |
 | `HENCE_MCP_TRADES` | `0` | Strictly `1` offers `propose_trade` and `get_trade_proposals`. Needs sign-in on, and the app's `AGENT_TRADES_ACTIVE=1` |
 | `HENCE_MCP_RESOURCE` | `https://mcp.hence.markets/mcp` | This server's own address. A credential is issued for exactly this address |
 | `HENCE_AUTH_ISSUER` | `https://app.hence.markets` | Who signs people in |

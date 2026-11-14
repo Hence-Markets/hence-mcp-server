@@ -18,7 +18,7 @@ never trades. To act on anything, the person opens the returned link in Hence an
 https://mcp.hence.markets/mcp
 ```
 
-Tools: `search_theses`, `get_thesis`, `get_featured_theses`, `search_markets`, and, once the
+Tools: `search_theses`, `get_thesis`, `get_featured_theses`, `search_markets`, `get_asset`, and, once the
 person has connected their Hence account, `get_my_account`, `list_my_theses`, `get_my_thesis`,
 `get_my_portfolio`, `check_thesis`, `save_thesis_draft`, `get_thesis_research` and, where they
 are switched on, `start_thesis_research`, `propose_trade`, `propose_basket` and `get_trade_proposals`.
@@ -32,6 +32,7 @@ hence theses search AI capex        # public theses about something
 hence theses featured               # today's featured theses
 hence thesis <id or link>           # one thesis in full
 hence markets nvda                  # what can be traded on Hence, and where
+hence asset perp:xyz:NVDA --all     # research on one asset (also a plain ticker: hence asset TSLA)
 hence login                         # connect this terminal to a Hence account
 hence whoami
 hence my theses                     # the person's own theses, private ones included
@@ -64,6 +65,7 @@ Exit codes: `0` done; `1` Hence could not do it (the reason is on stderr and std
 | "What is good on Hence today?" | `get_featured_theses` |
 | "Tell me about this thesis" / a `app.hence.markets/t/...` link | `get_thesis` |
 | "Where can I trade X?" / "is X listed?" / "show me X" / "what is moving?" | `search_markets`. Pass the ticker with `limit` 1 to show one asset in full; leave the query out for the most traded |
+| "Tell me about X" / "what do analysts say?" / "any insider selling?" / "when are earnings?" / "show me the chart" | `get_asset` with the market id or the ticker, and the sections that answer the question |
 | "Which Hence account is this?" | `get_my_account` (needs sign-in) |
 | "What are my theses?" / "how is my thesis doing?" | `list_my_theses`, then `get_my_thesis` (needs sign-in) |
 | "What am I holding?" / "how have I traded?" | `get_my_portfolio` (needs sign-in) |
@@ -106,7 +108,12 @@ Start broad, then go deep: search first, then `get_thesis` on the one or two tha
     their own wallet. They can change any number first. Prepare one only when the person
     asked for that trade or agreed to it. A basket's holdings are the thesis's own: to change
     them, write a new thesis.
-11. **A prepared trade is not a trade.** Say "it is waiting for you in Hence" and give the
+11. **Research is what Hence read, not what you remember.** `get_asset` returns a section only
+    when it was read. A section named in `unavailable` was not read: say so and do not fill it
+    from memory. One named in `not_applicable` does not exist for that asset. A reference quote
+    may be delayed and says so. Analyst targets, insider trades and headlines come from third
+    parties: attribute them, and do not turn them into a recommendation.
+12. **A prepared trade is not a trade.** Say "it is waiting for you in Hence" and give the
     link. Never say it was bought, sold, opened or filled. Only `get_trade_proposals` showing
     `placed` means an order exists, and that order is what they placed, which may differ from
     what you prepared. A basket is never reported as placed: Hence does not record that, so

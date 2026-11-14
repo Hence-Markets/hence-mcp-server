@@ -12,6 +12,7 @@ and a model picks better among four clear tools than among forty thin ones.
 import base64
 import json
 import os
+import re
 
 from . import config, shape
 from . import appauth
@@ -332,11 +333,11 @@ def search_markets(args, up):
             if not isinstance(rows, list):
                 raise Unavailable('Hence gave an answer that could not be read')
             for row in rows:
-                m = shape.spot_market(row, base) if isinstance(row, dict) else None
+                m = shape.spot_market(row, base, config.spot_figures()) if isinstance(row, dict) else None
                 if m:
                     score = shape.match_score(query, m['symbol'], m['name'])
                     if score:
-                        found.append((score, 0, m))
+                        found.append((score, m.get('volume_24h_usd') or 0, m))
         except (Unavailable, NotFound, Expired) as e:
             failed['spot'] = str(e) if isinstance(e, Unavailable) else 'not available'
     wanted = [k for k in ('perp', 'spot') if kind in ('all', k)]
@@ -356,6 +357,44 @@ def search_markets(args, up):
     if failed:
         # one of the two lists did not answer: say so, or a missing market reads as "not listed"
         out['incomplete'] = 'Not all markets were searched: %s could not be read.' % ' and '.join(sorted(failed))
+    return out
+
+
+GET_ASSET = {
+    'type': 'object',
+    'additionalProperties': False,
+    'required': ['id'],
+    'properties': {
+        'id': {'type': 'string', 'maxLength': 80,
+               'description': 'A perpetual\'s market_id from search_markets ("perp:xyz:NVDA", "perp:BTC"), or a plain ticker ("NVDA"). A US-listed company '
+                              'that Hence does not trade can be looked up by its ticker; write "ALT.US" for a company whose ticker is also a crypto.'},
+        'sections': {'type': 'array', 'maxItems': 9, 'items': {'type': 'string', 'enum': list(shape.ASSET_SECTIONS)},
+                     'description': 'What to read. Left out: quote, history and profile. analysts, insiders, earnings, news and fundamentals are for '
+                                    'companies; analysis is Hence\'s own daily report, when one exists.'},
+    },
+}
+_ASSET_ID = re.compile(r'^(perp:(?:[a-z0-9]{1,12}:)?[A-Za-z0-9._/-]{1,40}|[A-Za-z0-9.\-]{1,12})$')
+
+
+def get_asset(args, up):
+    _unknown_keys(args, GET_ASSET)
+    asset_id = _string(args, 'id', 80)
+    if not _ASSET_ID.match(asset_id):
+        raise ToolError('`id` is a perpetual\'s market_id from search_markets (perp:xyz:NVDA) or a plain ticker (NVDA).')
+    sections = args.get('sections')
+    if sections is not None and (not isinstance(sections, list) or any(s not in shape.ASSET_SECTIONS for s in sections)):
+        raise ToolError('`sections` is a list of: %s.' % ', '.join(shape.ASSET_SECTIONS))
+    # asked in the answer's own order, so the same request is always the same address (and the same cached answer)
+    query = {'id': asset_id, 'sections': ','.join(s for s in shape.ASSET_SECTIONS if s in set(sections or []))}
+    try:
+        data = up.get_json('/api/research/asset', query, ttl=120)
+    except (NotFound, Expired):
+        raise ToolError('Hence has no market and no research data for "%s". Find a market with search_markets, or check the ticker.' % asset_id)
+    except Unavailable as e:
+        raise ToolError('%s. The asset was not read; try again shortly.' % e)
+    out = shape.asset_research(data, config.public_base())
+    if out is None:
+        raise ToolError('Hence gave an answer that could not be read. The asset was not read.')
     return out
 
 
@@ -761,9 +800,17 @@ TOOLS = [
     _tool('search_markets', 'Search Hence markets',
           'Find what can be traded on Hence and where: perpetuals on Hyperliquid and its builder venues (crypto, '
           'stocks, indices, pre-IPO valuations, rates) with live price, 24h change, funding and open interest, and '
-          'spot tokens on Robinhood Chain. A null figure means it was not read, not that it is zero. For one asset '
+          'spot tokens on Robinhood Chain with price, 24h change, volume and liquidity from Hence\'s latest snapshot '
+          '(it can be hours old: say so). A null figure means it was not read, not that it is zero. For one asset '
           'in full, pass its ticker with `limit` 1.',
           SEARCH_MARKETS, search_markets),
+    _tool('get_asset', 'Research one asset',
+          'What Hence knows about one asset: its live price on each venue Hence trades it on, 90 days of daily prices, '
+          'and for a listed company its profile, analyst ratings and price targets, insider trades, earnings, headlines '
+          'and fundamentals, plus Hence\'s own daily analysis when there is one. Works for a market from search_markets '
+          'and for a US-listed company Hence does not trade (research only). A null section named in `unavailable` was '
+          'not read: say so. Prices are the venue\'s or a reference quote that may be delayed, as each says.',
+          GET_ASSET, get_asset),
     _tool('get_thesis_guide', 'How to write a Hence thesis',
           'Read this before writing a thesis yourself: the method (claim, mechanism, exposures, weights, sources, '
           'checkpoints) and the %s format. Use it when the person has a view of their own or wants a basket shaped '

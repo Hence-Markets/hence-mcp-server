@@ -81,7 +81,7 @@ class SwitchedOnOnlyWhenConfigured(Env):
         return [t['name'] for t in out['result']['tools']]
 
     def test_the_account_tool_is_listed_only_with_the_switch_and_the_secret(self):
-        self.assertEqual(self.names()[5:], ['get_my_account', 'list_my_theses', 'get_my_thesis', 'get_my_portfolio', 'check_thesis', 'save_thesis_draft',
+        self.assertEqual(self.names()[len(tools.TOOLS):], ['get_my_account', 'list_my_theses', 'get_my_thesis', 'get_my_portfolio', 'check_thesis', 'save_thesis_draft',
                                             'get_thesis_research'])
         # the one tool that spends Hence's money is listed only with a switch of its own
         self.assertNotIn('start_thesis_research', self.names())
@@ -91,7 +91,7 @@ class SwitchedOnOnlyWhenConfigured(Env):
             with mock.patch.dict(os.environ, {'HENCE_MCP_ACCOUNTS': '0'}):
                 self.assertNotIn('start_thesis_research', self.names())             # never without sign-in
         self.assertNotIn('theses:research', protocol.resource_metadata()['scopes_supported'])
-        self.assertEqual(self.names()[:5], [t['name'] for t in tools.TOOLS])            # public tools keep their order
+        self.assertEqual(self.names()[:len(tools.TOOLS)], [t['name'] for t in tools.TOOLS])            # public tools keep their order
         for change in ({'HENCE_MCP_ACCOUNTS': '0'}, {'HENCE_MCP_ACCOUNTS': 'true'}, {'HENCE_MCP_GATEWAY_SECRET': ''}, {'HENCE_MCP_GATEWAY_SECRET': 'x' * 31}):
             with mock.patch.dict(os.environ, change):
                 self.assertNotIn('get_my_account', self.names(), change)
