@@ -21,7 +21,7 @@ SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'gateway')
 class ReadOnlyByConstruction(unittest.TestCase):
     def test_every_tool_declares_itself_a_read(self):
         self.assertEqual([t['name'] for t in tools.TOOLS],
-                         ['search_theses', 'get_thesis', 'get_featured_theses', 'search_markets', 'get_thesis_guide'])
+                         ['search_theses', 'get_thesis', 'get_featured_theses', 'search_markets', 'get_asset', 'get_thesis_guide'])
         for t in tools.TOOLS:
             a = t['annotations']
             self.assertIs(a['readOnlyHint'], True, t['name'])

@@ -4,6 +4,7 @@
     hence theses featured            today's featured theses
     hence thesis <id or link>        one thesis in full
     hence markets <words>            what can be traded on Hence, and where
+    hence asset <market id|ticker>   research on one asset: price, history, analysts, insiders, earnings, news
     hence login | logout | whoami    connect this terminal to your Hence account
     hence my theses                  your own theses, private ones included
     hence my thesis <id or link>     one of them in full
@@ -72,6 +73,11 @@ def _parser():
     markets.add_argument('query', nargs='*')
     markets.add_argument('--kind', choices=['all', 'perp', 'spot'])
     markets.add_argument('--limit', type=int)
+
+    asset = sub.add_parser('asset', help='research on one asset: price, history and, for a company, analysts, insiders, earnings, news', parents=[common])
+    asset.add_argument('id', help='a market id from `hence markets` (perp:xyz:NVDA) or a ticker (NVDA)')
+    asset.add_argument('--sections', help='comma-separated: quote,history,profile,analysts,insiders,earnings,news,fundamentals,analysis')
+    asset.add_argument('--all', action='store_true', help='every section')
 
     my = sub.add_parser('my', help='your own theses (needs hence login)', parents=[common])
     msub = my.add_subparsers(dest='what', metavar='theses|thesis')
@@ -164,6 +170,10 @@ def _arguments(ns):
         return 'get_thesis', some(thesis_id=found.group(0).lower(), period_days=ns.days, include_related=ns.related)
     if ns.command == 'markets':
         return 'search_markets', some(query=' '.join(ns.query), kind=ns.kind, limit=ns.limit)
+    if ns.command == 'asset':
+        every = ['quote', 'history', 'profile', 'analysts', 'insiders', 'earnings', 'news', 'fundamentals', 'analysis']
+        sections = every if ns.all else [s.strip() for s in (ns.sections or '').split(',') if s.strip()]
+        return 'get_asset', some(id=ns.id, sections=sections or None)
     if ns.command == 'whoami':
         return 'get_my_account', {}
     if ns.command == 'my':

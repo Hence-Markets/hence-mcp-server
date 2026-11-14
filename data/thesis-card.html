@@ -70,6 +70,9 @@
   .quote { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; }
   .quote b { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .quote span { font-size: 13px; font-variant-numeric: tabular-nums; }
+  .spark { display: block; width: 100%; height: 64px; margin: 4px 0 2px; }
+  .spark polyline { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; stroke: var(--dim); }
+  .spark polyline.pos { stroke: var(--up); } .spark polyline.neg { stroke: var(--down); }
   @media (max-width: 420px) { .figs { grid-template-columns: 1fr 1fr; } .row { grid-template-columns: minmax(70px, 1.2fr) 40px 2fr 44px; } }
 </style>
 </head>
@@ -384,6 +387,70 @@
     return card;
   }
 
+  /* Research on one asset: its price, 90 days of daily closes drawn as a line, and for a company
+     its analysts, next earnings and headlines. The line is drawn from the closes Hence returned
+     and nothing else: fewer than two points draws no line, and a gap is not filled in. */
+  function spark(points) {
+    var closes = points.map(function (p) { return p && isNum(p.close) ? p.close : null; }).filter(function (c) { return c !== null; });
+    if (closes.length < 2) return null;
+    var w = 300, h = 64, min = Math.min.apply(null, closes), max = Math.max.apply(null, closes), span = max - min;
+    var ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg'), line = document.createElementNS(ns, 'polyline');
+    svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h); svg.setAttribute('preserveAspectRatio', 'none'); svg.setAttribute('class', 'spark');
+    svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', 'Daily closing prices over the period');
+    line.setAttribute('points', closes.map(function (c, i) {
+      var y = span > 0 ? h - 4 - (c - min) / span * (h - 8) : h / 2;
+      return (i / (closes.length - 1) * w).toFixed(1) + ',' + y.toFixed(1);
+    }).join(' '));
+    line.setAttribute('class', closes[closes.length - 1] > closes[0] ? 'pos' : closes[closes.length - 1] < closes[0] ? 'neg' : '');
+    svg.appendChild(line);
+    return svg;
+  }
+  function asset(value) {
+    var a = value.asset, card = el('div', 'card');
+    card.appendChild(el('div', 'eyebrow', 'Hence research' + (a['class'] ? ' · ' + a['class'] : '')));
+    card.appendChild(el('h1', '', a.symbol || a.id || 'Unknown asset'));
+    var prof = value.profile;
+    if (prof) card.appendChild(el('div', 'by', [prof.name, prof.sector, prof.exchange].filter(Boolean).join(' · ')));
+    var q = value.quote, live = q && Array.isArray(q.venues) && q.venues.length ? q.venues[0] : null, ref = q && q.reference ? q.reference : null;
+    if (live || ref) {
+      var quote = el('div', 'quote'), change = live ? live.change_24h_pct : ref.change_pct;
+      quote.appendChild(el('b', '', px(live ? live.price : ref.price)));
+      quote.appendChild(el('span', tone(change), pct(change) + (live ? ' in 24 hours' : ' on the day')));
+      card.appendChild(quote);
+      if (!live) card.appendChild(el('div', 'small', 'A reference quote, which may be delayed.'));
+    }
+    var hist = value.history;
+    if (hist && Array.isArray(hist.points)) {
+      var drawn = spark(hist.points);
+      if (drawn) card.appendChild(drawn);
+      card.appendChild(el('div', 'small', (hist.from && hist.to ? hist.from + ' to ' + hist.to + ': ' : '') + pct(hist.change_pct) + (hist.source ? ' (' + hist.source + ')' : '')));
+    }
+    var an = value.analysts, earn = value.earnings, figs = [];
+    if (an && an.price_target) figs.push(['Analyst target', px(an.price_target.consensus)]);
+    if (an && an.ratings && an.ratings.consensus) figs.push(['Analyst rating', an.ratings.consensus]);
+    if (earn && earn.next_date) figs.push(['Next earnings', earn.next_date]);
+    if (figs.length) {
+      var box = el('div', 'figs');
+      figs.forEach(function (f) { var fig = el('div', 'fig'); fig.appendChild(el('b', '', f[1])); fig.appendChild(el('span', '', f[0])); box.appendChild(fig); });
+      card.appendChild(box);
+    }
+    var news = value.news;
+    if (news && Array.isArray(news.headlines) && news.headlines.length) {
+      card.appendChild(el('div', 'label', 'Headlines'));
+      var ul = el('ul');
+      news.headlines.slice(0, 3).forEach(function (n) { if (n && n.title) ul.appendChild(el('li', '', n.title + (n.publisher ? ' (' + n.publisher + ')' : ''))); });
+      card.appendChild(ul);
+      card.appendChild(el('div', 'small', 'Headlines are written by their publishers, not by Hence.'));
+    }
+    if (value.analysis && value.analysis.verdict) { card.appendChild(el('div', 'label', 'Hence analysis')); card.appendChild(el('p', '', value.analysis.verdict)); }
+    if (Array.isArray(value.unavailable) && value.unavailable.length) card.appendChild(el('div', 'warnline', 'Could not be read: ' + value.unavailable.join(', ') + '.'));
+    var first = Array.isArray(a.markets) && a.markets.length ? a.markets[0] : null;
+    var button = first ? openButton(first.url, 'Trade in Hence') : null;
+    if (button) card.appendChild(button);
+    card.appendChild(el('div', 'small', (a.tradeable_on_hence === false ? 'Hence does not list a market for this asset: research only. ' : '') + 'Nothing here is investment advice.'));
+    return card;
+  }
+
   // The host sizes the frame from this. Said after every draw, not only when a ResizeObserver
   // fires: a frame that is not being painted yet delivers no resize, and the card would stay
   // at its first height, cut off.
@@ -404,6 +471,7 @@
     }
     if (Array.isArray(value.theses)) show(list(value));
     else if (Array.isArray(value.markets)) show(markets(value));
+    else if (value.asset && typeof value.asset === 'object') show(asset(value));
     else if (value.proposal && typeof value.proposal === 'object' && value.proposed === true) show(proposal(value.proposal, value));
     else if (value.proposed === false && Array.isArray(value.problems) && value.problems.length) show(refused(value));
     else if (Array.isArray(value.proposals)) show(proposals(value));

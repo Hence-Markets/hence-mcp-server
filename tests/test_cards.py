@@ -71,8 +71,8 @@ class Served(unittest.TestCase):
         with_card = sorted(name for name, meta in listed.items() if meta)
         self.assertEqual(with_card, sorted(cards.TOOLS))
         # theses, and a trade PREPARED for the person: its card says "not placed" and opens Hence (tests/test_trades.py)
-        self.assertEqual(with_card, ['get_featured_theses', 'get_my_thesis', 'get_thesis', 'get_trade_proposals', 'list_my_theses', 'propose_basket',
-                                     'propose_trade', 'search_markets', 'search_theses'])
+        self.assertEqual(with_card, ['get_asset', 'get_featured_theses', 'get_my_thesis', 'get_thesis', 'get_trade_proposals', 'list_my_theses',
+                                     'propose_basket', 'propose_trade', 'search_markets', 'search_theses'])
         for name in with_card:
             self.assertEqual(listed[name], {'ui': {'resourceUri': 'ui://hence/thesis-card'}})
         # nothing else that writes, and nothing that reads the person's money, draws itself into a chat

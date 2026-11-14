@@ -331,6 +331,67 @@ def trade(value):
     return '\n'.join(out)
 
 
+def asset(value):
+    """`get_asset`: what Hence knows about one asset. A section that was not read is said, by name."""
+    a = value.get('asset') if isinstance(value.get('asset'), dict) else {}
+    out = ['%s  (%s)%s' % (text(a.get('symbol')), text(a.get('class')), '' if a.get('tradeable_on_hence') is not False else '  research only: not traded on Hence')]
+    prof = value.get('profile') if isinstance(value.get('profile'), dict) else None
+    if prof:
+        out.append('  %s' % ' · '.join(x for x in (prof.get('name'), prof.get('sector'), prof.get('industry'), prof.get('exchange')) if isinstance(x, str) and x))
+    quote = value.get('quote') if isinstance(value.get('quote'), dict) else None
+    if quote:
+        rows = [[text(v.get('market_id')), price(v.get('price')), pct(v.get('change_24h_pct')), pct(v.get('funding_apr_pct')), money(v.get('open_interest_usd'))]
+                for v in quote.get('venues') or [] if isinstance(v, dict)]
+        if rows:
+            out.append(table(rows, ['market', 'price', '24h', 'funding/yr', 'open interest']))
+        ref = quote.get('reference') if isinstance(quote.get('reference'), dict) else None
+        if ref:
+            out.append('  reference quote (may be delayed): %s  %s  52-week %s to %s' % (price(ref.get('price')), pct(ref.get('change_pct')),
+                                                                                       price(ref.get('year_low')), price(ref.get('year_high'))))
+    hist = value.get('history') if isinstance(value.get('history'), dict) else None
+    if hist:
+        out.append('  %s to %s: %s  (low %s, high %s; %s)' % (text(hist.get('from')), text(hist.get('to')), pct(hist.get('change_pct')),
+                                                            price(hist.get('low')), price(hist.get('high')), text(hist.get('source'))))
+    an = value.get('analysts') if isinstance(value.get('analysts'), dict) else None
+    if an:
+        target, ratings = an.get('price_target') or {}, an.get('ratings') or {}
+        out.append('  analysts: %s; target %s (low %s, high %s)' % (text(ratings.get('consensus')), price(target.get('consensus')), price(target.get('low')), price(target.get('high'))))
+        for g in (an.get('recent_changes') or [])[:5]:
+            if isinstance(g, dict):
+                out.append('    %s  %s: %s -> %s' % (text(g.get('date')), text(g.get('firm')), text(g.get('from')), text(g.get('to'))))
+    earn = value.get('earnings') if isinstance(value.get('earnings'), dict) else None
+    if earn:
+        out.append('  earnings: next %s' % text(earn.get('next_date')))
+        for e in (earn.get('reported') or [])[:4]:
+            if isinstance(e, dict):
+                out.append('    %s  EPS %s (estimate %s)' % (text(e.get('date')), price(e.get('eps')), price(e.get('eps_estimate'))))
+    ins = value.get('insiders') if isinstance(value.get('insiders'), dict) else None
+    if ins:
+        rows = [[text(t.get('traded') or t.get('filed')), text(t.get('who')), text(t.get('direction')), count(t.get('shares')), _exact(t.get('value_usd'))]
+                for t in (ins.get('transactions') or [])[:8] if isinstance(t, dict)]
+        out.append('  insiders:\n' + table(rows, ['date', 'who', 'did', 'shares', 'value']) if rows else '  insiders: none reported')
+    fund = value.get('fundamentals') if isinstance(value.get('fundamentals'), dict) else None
+    if fund:
+        out.append('  P/E %s · gross margin %s · net margin %s · EV/sales %s' % (
+            price(fund.get('pe')), pct(fund['gross_margin'] * 100, signed=False) if isinstance(fund.get('gross_margin'), (int, float)) else NA,
+            pct(fund['net_margin'] * 100, signed=False) if isinstance(fund.get('net_margin'), (int, float)) else NA, price(fund.get('ev_to_sales'))))
+    news = value.get('news') if isinstance(value.get('news'), dict) else None
+    if news:
+        out.append('  headlines (written by their publishers):')
+        out += ['    %s  %s  (%s)' % (text(n.get('published'))[:10], text(n.get('title')), text(n.get('publisher'))) for n in (news.get('headlines') or [])[:8] if isinstance(n, dict)]
+    rep = value.get('analysis') if isinstance(value.get('analysis'), dict) else None
+    if rep:
+        out.append('  Hence analysis (%s): %s' % (text(rep.get('date')), text(rep.get('verdict'))))
+    for key, label in (('unavailable', 'could not be read'), ('not_applicable', 'does not apply to this asset')):
+        names = [s for s in value.get(key) or [] if isinstance(s, str)]
+        if names:
+            out.append('  %s: %s' % (label, ', '.join(names)))
+    markets_ = [m.get('url') for m in a.get('markets') or [] if isinstance(m, dict) and m.get('url')]
+    if markets_:
+        out.append('  trade in Hence: %s' % markets_[0])
+    return '\n'.join(out)
+
+
 def guide(value):
     return value.get('guide') if isinstance(value.get('guide'), str) else json.dumps(value, indent=2, ensure_ascii=False)
 
@@ -341,7 +402,7 @@ def tools(found):
 
 
 VIEWS = {'search_theses': theses, 'get_featured_theses': lambda v: theses(v, with_return=True), 'get_thesis': thesis,
-         'search_markets': markets, 'get_my_account': account, 'list_my_theses': my_theses, 'get_my_thesis': my_thesis,
+         'search_markets': markets, 'get_asset': asset, 'get_my_account': account, 'list_my_theses': my_theses, 'get_my_thesis': my_thesis,
          'get_my_portfolio': portfolio, 'get_thesis_guide': guide, 'check_thesis': check, 'save_thesis_draft': check,
          'start_thesis_research': research, 'get_thesis_research': research, 'propose_trade': trade, 'propose_basket': trade, 'get_trade_proposals': trade}
 
