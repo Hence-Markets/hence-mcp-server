@@ -102,8 +102,9 @@ Start broad, then go deep: search first, then `get_thesis` on the one or two tha
 8. **A thesis you write is yours, not Hence's.** Say so. Show it to the person before you
    save it, and tell them it lands as a draft they review and save in Hence.
 9. **Hence research takes 20 to 40 minutes and uses one of the person's daily runs.** Ask
-   before you start one, tell them how long it takes, and do not wait in a loop: check back
-   about every ten minutes. When they want it now or want it their way, write the thesis
+   before you start one and tell them how long it takes. Where your client supports long
+   tasks it is told when the research finishes and tells you. Where it does not, do not wait
+   in a loop: check back about every ten minutes. When they want it now or want it their way, write the thesis
    yourself instead.
 10. **Nothing here places a trade or moves money.** You can prepare one perpetual order with
     `propose_trade`, or buying a thesis's basket with `propose_basket`: Hence stores it, the

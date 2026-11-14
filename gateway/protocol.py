@@ -25,7 +25,7 @@ import json
 import time
 import urllib.parse
 
-from . import appauth, cards, config, tools
+from . import appauth, cards, config, shape, tools
 
 MODERN_VERSIONS = ('2026-07-28',)
 LEGACY_VERSIONS = ('2025-11-25', '2025-06-18', '2025-03-26')
@@ -37,6 +37,20 @@ META_SERVER = 'io.modelcontextprotocol/serverInfo'
 # JSON-RPC and MCP error codes
 PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR = -32700, -32600, -32601, -32602, -32603
 HEADER_MISMATCH, UNSUPPORTED_VERSION = -32020, -32022
+MISSING_CLIENT_CAPABILITY = -32021
+
+# The tasks extension (SEP-2663, revision 2026-07-28): a server may answer tools/call with a task
+# handle instead of a result, and the client polls tasks/get until it is done. Hence research
+# takes 20 to 40 minutes, so a client that says it speaks the extension gets a task for it and
+# is told when it finishes, instead of having to ask again. The task IS the person's research
+# run in Hence: its id is the run's id and its state is read from the app on every poll, so this
+# server holds nothing and a restart loses nothing.
+META_CLIENT_CAPABILITIES = 'io.modelcontextprotocol/clientCapabilities'
+TASKS_EXTENSION = 'io.modelcontextprotocol/tasks'
+TASK_TOOL = 'start_thesis_research'
+TASK_SCOPE = 'theses:read'                # following a run is a read, as the tool that follows one is
+TASK_TTL_MS = 24 * 3600 * 1000            # a run stays readable far longer; a client need not poll past a day
+TASK_POLL_MS = 30000
 NOT_OPEN = -32000
 SIGN_IN = -32001
 
@@ -54,6 +68,44 @@ INSTRUCTIONS = (
 
 
 CAPABILITIES = {'tools': {'listChanged': False}, 'resources': {'listChanged': False, 'subscribe': False}}
+
+
+def capabilities():
+    """What this server can do right now. The tasks extension is declared only while the one tool
+    that returns a task is offered (config.research_active)."""
+    if not config.research_active():
+        return CAPABILITIES
+    return dict(CAPABILITIES, extensions={TASKS_EXTENSION: {}})
+
+
+def _speaks_tasks(meta):
+    """Did THIS request declare the tasks extension? It is declared per request, and a server must
+    not return a task to a client that did not declare it on the request it is answering."""
+    declared = meta.get(META_CLIENT_CAPABILITIES) if isinstance(meta, dict) else None
+    extensions = declared.get('extensions') if isinstance(declared, dict) else None
+    return isinstance(extensions, dict) and isinstance(extensions.get(TASKS_EXTENSION), dict)
+
+
+def _iso_now():
+    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+
+
+def research_task(run):
+    """A research run (shape.research_run) as a task. Finished is the app's word, never this
+    server's guess. A run that ended without a thesis is still a COMPLETED task carrying what
+    happened: `failed` is reserved by the specification for protocol errors."""
+    done = run['finished'] is True
+    task = {
+        'taskId': run['run_id'], 'status': 'completed' if done else 'working',
+        'statusMessage': (run.get('outcome') or 'The research finished.') if done
+        else (run.get('now') or 'Hence is researching this. It takes 20 to 40 minutes.'),
+        'createdAt': run.get('started_at') or _iso_now(), 'lastUpdatedAt': run.get('finished_at') or _iso_now(),
+        'ttlMs': TASK_TTL_MS, 'pollIntervalMs': TASK_POLL_MS,
+    }
+    if done:
+        task['result'] = {'content': [{'type': 'text', 'text': json.dumps(run, ensure_ascii=False, separators=(',', ':'))}],
+                          'structuredContent': run, 'isError': run.get('status') == 'failed'}
+    return task
 
 
 def _resource(method, params):
@@ -138,6 +190,68 @@ def _refusal(sentence):
     return {'content': [{'type': 'text', 'text': sentence}], 'isError': True}
 
 
+def _connect(scope, headers, auth):
+    """The person's connection for a request that needs `scope` -> (account, bearer, challenge,
+    unavailable). Exactly one of account, challenge and unavailable is set: a usable connection;
+    an HTTP 401/403 that sends the person to Hence; or a sentence saying Hence did not answer
+    (never "sign in again", which would throw away a good connection)."""
+    bearer = _bearer(headers or {})
+    if not bearer or auth is None:
+        return None, '', _challenge(401, scope, None, 'Connect your Hence account to use this.'), None
+    try:
+        conn = auth.connection(bearer)
+    except appauth.NotConnected:
+        return None, bearer, _challenge(401, scope, 'invalid_token', 'This agent is not connected to a Hence account. Connect it again.'), None
+    except appauth.Unavailable as e:
+        return None, bearer, None, '%s. Your account was not read; try again shortly.' % e
+    if scope not in conn['scopes']:
+        return None, bearer, _challenge(403, scope, 'insufficient_scope', 'This needs a permission you have not given this agent.'), None
+    return _Account(auth, conn['grant']), bearer, None, None
+
+
+def _task_request(method, params, meta, headers, auth, log):
+    """tasks/get, tasks/cancel and tasks/update -> ('result', task-or-ack), ('error', (code,
+    message, data)) or ('challenge', challenge). The task is the person's research run: it is
+    read from the app under their connection on every call, and an id that is not theirs is
+    "not found", the same as an id that does not exist."""
+    if not _speaks_tasks(meta):
+        return 'error', (MISSING_CLIENT_CAPABILITY, 'Missing required client capability',
+                         {'requiredCapabilities': {'extensions': {TASKS_EXTENSION: {}}}})
+    task_id = params.get('taskId')
+    if not isinstance(task_id, str) or not shape.UUID_RE.match(task_id):
+        return 'error', (INVALID_PARAMS, 'Failed to retrieve task: Task not found', None)
+    if method == 'tasks/update':
+        return 'error', (INVALID_PARAMS, 'This task is not waiting for input.', None)
+    account, bearer, challenge, unavailable = _connect(TASK_SCOPE, headers, auth)
+    if challenge:
+        return 'challenge', challenge
+    if unavailable:
+        return 'error', (INTERNAL_ERROR, unavailable, None)
+    try:
+        run = shape.research_run(account.get('/api/agents/v1/research/' + task_id.lower()))
+    except appauth.NotConnected:
+        auth.forget(bearer)
+        return 'challenge', _challenge(401, TASK_SCOPE, 'invalid_token', 'This agent is no longer connected to a Hence account. Connect it again.')
+    except appauth.MissingScope as e:
+        return 'challenge', _challenge(403, e.scope or TASK_SCOPE, 'insufficient_scope', 'This needs a permission you have not given this agent.')
+    except appauth.Refused as e:
+        if e.status == 404:
+            return 'error', (INVALID_PARAMS, 'Failed to retrieve task: Task not found', None)
+        return 'error', (INTERNAL_ERROR, str(e), None)
+    except (appauth.Busy, appauth.Unavailable) as e:
+        # not a verdict on the task: the client keeps polling
+        return 'error', (INTERNAL_ERROR, 'Hence could not read the research just now (%s). Poll again.' % e, None)
+    if run is None:
+        return 'error', (INTERNAL_ERROR, 'Hence gave an answer that could not be read. Poll again.', None)
+    if log:
+        log('task=%s method=%s status=%s' % ('research', method, 'completed' if run['finished'] else 'working'))
+    if method == 'tasks/cancel':
+        # Cancellation is cooperative, and Hence does not stop a run once it has started: the
+        # request is acknowledged and the run carries on in the person's account.
+        return 'result', {}
+    return 'result', research_task(run)
+
+
 def _call_tool(params, upstream, log, headers=None, auth=None):
     """-> (result, None, None), (None, (code, message), None) or (None, None, challenge).
 
@@ -156,21 +270,13 @@ def _call_tool(params, upstream, log, headers=None, auth=None):
         return None, (INVALID_PARAMS, 'Tool arguments must be an object.'), None
     scope, account, bearer = tool.get('scope'), None, ''
     if scope:
-        bearer = _bearer(headers or {})
-        if not bearer or auth is None:
-            return None, None, _challenge(401, scope, None, 'Connect your Hence account to use this.')
-        try:
-            conn = auth.connection(bearer)
-        except appauth.NotConnected:
-            return None, None, _challenge(401, scope, 'invalid_token', 'This agent is not connected to a Hence account. Connect it again.')
-        except appauth.Unavailable as e:
-            # Hence did not answer: say so. Answering "sign in again" would throw away a good connection.
+        account, bearer, challenge, unavailable = _connect(scope, headers, auth)
+        if challenge:
+            return None, None, challenge
+        if unavailable:
             if log:
                 log('tool=%s outcome=auth-unavailable' % name)
-            return _refusal('%s. Your account was not read; try again shortly.' % e), None, None
-        if scope not in conn['scopes']:
-            return None, None, _challenge(403, scope, 'insufficient_scope', 'This needs a permission you have not given this agent.')
-        account = _Account(auth, conn['grant'])
+            return _refusal(unavailable), None, None
     started = time.monotonic()
     try:
         value = tool['handler'](args, upstream, account) if scope else tool['handler'](args, upstream)
@@ -269,7 +375,7 @@ def _handle(headers, raw, upstream, log, auth):
         if method == 'server/discover':
             return 200, _result(msg_id, {
                 'resultType': 'complete', 'supportedVersions': list(SUPPORTED),
-                'capabilities': CAPABILITIES,
+                'capabilities': capabilities(),
                 'instructions': INSTRUCTIONS, 'ttlMs': 3600000, 'cacheScope': 'public', '_meta': stamp})
         if method in ('resources/list', 'resources/read'):
             result, err = _resource(method, params)
@@ -288,7 +394,22 @@ def _handle(headers, raw, upstream, log, auth):
                 return challenge[0], _error(msg_id, SIGN_IN, challenge[1]), {'WWW-Authenticate': challenge[2]}
             if err:
                 return 200, _error(msg_id, err[0], err[1])
+            started = result.get('structuredContent') if result.get('isError') is False else None
+            if params.get('name') == TASK_TOOL and _speaks_tasks(meta) and isinstance(started, dict) and started.get('started') is True \
+                    and isinstance(started.get('run'), dict):
+                # The run exists in Hence before this is sent (the app answered with it), so a
+                # tasks/get for this id resolves: the specification's condition for returning a task.
+                return 200, _result(msg_id, dict(research_task(started['run']), resultType='task', _meta=stamp))
             return 200, _result(msg_id, dict(result, resultType='complete', _meta=stamp))
+        if method in ('tasks/get', 'tasks/cancel', 'tasks/update') and config.research_active():
+            if _header_value(headers.get('mcp-name')) != params.get('taskId'):
+                return 400, _error(msg_id, HEADER_MISMATCH, 'Header mismatch: Mcp-Name header does not match the taskId in the body')
+            kind, value = _task_request(method, params, meta, headers, auth, log)
+            if kind == 'challenge':
+                return value[0], _error(msg_id, SIGN_IN, value[1]), {'WWW-Authenticate': value[2]}
+            if kind == 'error':
+                return 200, _error(msg_id, value[0], value[1], value[2])
+            return 200, _result(msg_id, dict(value, resultType='complete', _meta=stamp))
         # the spec's signal that this IS a modern server that lacks the method (not a legacy 404)
         return 404, _error(msg_id, METHOD_NOT_FOUND, 'Method not found: %s' % method)
 
