@@ -40,9 +40,13 @@ def _fetch(url, timeout):
     })
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            return r.status, r.read()
+            # one byte past the cap tells "too large" from "exactly the cap"; a larger body is not an answer
+            raw = r.read(config.MAX_UPSTREAM_BYTES + 1)
+            if len(raw) > config.MAX_UPSTREAM_BYTES:
+                return 502, b''
+            return r.status, raw
     except urllib.error.HTTPError as e:
-        return e.code, e.read() if hasattr(e, 'read') else b''
+        return e.code, e.read(64 * 1024) if hasattr(e, 'read') else b''
 
 
 class Upstream:
@@ -90,7 +94,11 @@ class Upstream:
                     # drop what has expired, then the oldest: bounded memory under any traffic
                     for k in [k for k, v in self._cache.items() if v[0] <= now]:
                         self._cache.pop(k, None)
+                    # Oldest first, but an answer to a caller-chosen query goes before a whole list read
+                    # (a screener, the Solana catalog: a URL with no query). Otherwise a caller spraying
+                    # search words would push those large reads out and make every call re-read the app.
                     while len(self._cache) >= self.MAX_ENTRIES:
-                        self._cache.pop(next(iter(self._cache)))
+                        keyed = next((k for k in self._cache if '?' in k), None)
+                        self._cache.pop(keyed if keyed is not None else next(iter(self._cache)))
                 self._cache[url] = (now + ttl, data)
         return data

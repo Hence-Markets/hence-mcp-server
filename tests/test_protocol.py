@@ -58,9 +58,9 @@ class Modern(Base):
         r = out['result']
         self.assertEqual(r['resultType'], 'complete')
         self.assertEqual(r['supportedVersions'][0], V)
-        self.assertEqual(r['capabilities'], {'tools': {'listChanged': False}})
+        self.assertEqual(r['capabilities'], {'tools': {'listChanged': False}, 'resources': {'listChanged': False, 'subscribe': False}})
         self.assertEqual(r['_meta']['io.modelcontextprotocol/serverInfo']['name'], 'hence')
-        self.assertIn('read-only', r['instructions'])
+        self.assertIn('Nothing here creates an account, publishes a thesis, places a trade or moves money', r['instructions'])
         self.assertEqual((r['cacheScope'], isinstance(r['ttlMs'], int)), ('public', True))
 
     def test_tools_list_is_cacheable_and_stable(self):
@@ -77,7 +77,29 @@ class Modern(Base):
         r = out['result']
         self.assertEqual((r['resultType'], r['isError']), ('complete', False))
         self.assertEqual(r['structuredContent']['thesis_id'], T1)
-        self.assertEqual(json.loads(r['content'][0]['text']), r['structuredContent'])   # the text block is the same data
+        # The text block is the same data, less what only the card draws (2026-11-15: a thesis's chart points). A model
+        # reads the figures; ninety pairs of numbers it should never read out stay out of its text.
+        told, drawn = json.loads(r['content'][0]['text']), r['structuredContent']
+        self.assertEqual(told, {k: v for k, v in drawn.items() if k != 'card'})
+        self.assertNotIn('card', told)
+        self.assertEqual(sorted(drawn['card']), ['curve'])
+        line = drawn['card']['curve']
+        self.assertEqual(sorted(line), ['basket', 'benchmark', 'dates'])
+        self.assertEqual(len(line['dates']), len(line['basket']))
+        self.assertEqual(line['basket'][0], 100.0)                                     # the value of 100 put in at the start
+        self.assertEqual(told['performance'], drawn['performance'])                    # the figures a model may state are in both
+
+    def test_the_cards_line_is_drawn_only_from_whole_points(self):
+        from gateway import shape
+        row = lambda d, v, b: {'date': d, 'value': v, 'benchmark': b}
+        whole = shape.curve({'curve': [row('2026-08-15', 100.0, 100.0), row('2026-08-16', 100.114, 99.7098)]})
+        self.assertEqual(whole, {'dates': ['2026-08-15', '2026-08-16'], 'basket': [100.0, 100.11], 'benchmark': [100.0, 99.71]})
+        # a point with no value is dropped, never drawn at zero; a benchmark missing anywhere means no benchmark line at all
+        gaps = shape.curve({'curve': [row('2026-08-15', 100.0, 100.0), row('2026-08-16', None, 99.0), row('2026-08-17', 0, 99.0), row('2026-08-18', 101.0, None)]})
+        self.assertEqual(gaps, {'dates': ['2026-08-15', '2026-08-18'], 'basket': [100.0, 101.0], 'benchmark': None})
+        for none in ({}, None, {'curve': 'x'}, {'curve': []}, {'curve': [row('2026-08-15', 100.0, 100.0)]}, {'curve': [1, 'x', None]}):
+            self.assertIsNone(shape.curve(none), none)                                 # one point, or none, is not a line
+        self.assertEqual(len(shape.curve({'curve': [row('2026-01-01', 100.0 + i, 100.0) for i in range(900)]})['dates']), 400)   # bounded
 
     def test_a_tool_failure_is_a_result_the_model_can_read(self):
         status, out = self.run_(modern('tools/call', {'name': 'get_thesis', 'arguments': {'thesis_id': 'nope'}}, name='get_thesis'))
@@ -124,7 +146,7 @@ class Modern(Base):
         self.assertEqual(out['error']['data'], {'supported': list(protocol.SUPPORTED), 'requested': '2030-01-01'})
 
     def test_an_unknown_method_is_a_404_with_a_json_rpc_body(self):
-        for method in ('resources/list', 'prompts/list', 'ping', 'initialize'):
+        for method in ('prompts/list', 'resources/subscribe', 'resources/templates/list', 'ping', 'initialize'):
             status, out = self.run_(modern(method))
             self.assertEqual((status, out['error']['code']), (404, -32601), method)
 
@@ -157,7 +179,7 @@ class Legacy(Base):
         self.assertIn('tools', out['result'])
 
     def test_an_unknown_method_is_a_json_rpc_error(self):
-        status, out = self.run_(legacy('resources/list'))
+        status, out = self.run_(legacy('prompts/list'))
         self.assertEqual((status, out['error']['code']), (200, -32601))
 
     def test_a_modern_header_without_the_body_version_is_refused_not_guessed(self):

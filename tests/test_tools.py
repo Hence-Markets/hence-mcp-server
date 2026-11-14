@@ -21,12 +21,22 @@ SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'gateway')
 class ReadOnlyByConstruction(unittest.TestCase):
     def test_every_tool_declares_itself_a_read(self):
         self.assertEqual([t['name'] for t in tools.TOOLS],
-                         ['search_theses', 'get_thesis', 'get_featured_theses', 'search_markets'])
+                         ['search_theses', 'get_thesis', 'get_featured_theses', 'search_markets', 'get_asset', 'get_thesis_guide'])
         for t in tools.TOOLS:
             a = t['annotations']
             self.assertIs(a['readOnlyHint'], True, t['name'])
             self.assertIs(a['destructiveHint'], False, t['name'])
             self.assertNotRegex(t['name'], r'(trade|order|buy|sell|withdraw|transfer|send|deposit|fund|create|approve|sign)')
+
+    def test_the_image_check_pins_the_same_tool_list(self):
+        # CI builds the image and runs scripts/test_container.sh, which pins the public tool list
+        # too. It needs Docker, so it does not run with these tests: adding get_asset passed here
+        # and failed there. The two lists are compared here so the next tool fails before the push.
+        with open(os.path.join(SRC, '..', 'scripts', 'test_container.sh'), encoding='utf-8') as f:
+            script = f.read()
+        pinned = re.search(r"^assert names == \[([^\]]*)\], names$", script, re.M)
+        self.assertIsNotNone(pinned, 'the image check no longer pins the tool list')
+        self.assertEqual(re.findall(r"'([a-z_]+)'", pinned.group(1)), [t['name'] for t in tools.TOOLS])
 
     def test_the_gateway_only_ever_reads_the_app(self):
         # Two modules talk to the network, and each is boxed in:
@@ -55,20 +65,65 @@ class ReadOnlyByConstruction(unittest.TestCase):
         self.assertNotRegex(requests_made[0], r"\bmethod\s*=")
         # the signed-in half reaches exactly these, and every one of them is a read of the person's own account
         self.assertEqual(appauth.INTROSPECT, '/api/agents/v1/introspect')
-        self.assertEqual(appauth.ACCOUNT_PATHS, ('/api/agents/v1/whoami',))
+        self.assertEqual(appauth.ACCOUNT_PATHS, ('/api/agents/v1/whoami', '/api/agents/v1/theses', '/api/agents/v1/portfolio', '/api/agents/v1/research',
+                                                 '/api/agents/v1/trades/proposals'))
+        self.assertEqual([p.pattern for p in appauth.ACCOUNT_PATTERNS],
+                         [r'^/api/agents/v1/theses/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(/performance)?$',
+                          r'^/api/agents/v1/research/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+                          r'^/api/agents/v1/trades/proposals/pr_[A-Za-z0-9_-]{22}$'])
+        ok = '11111111-1111-4111-8111-111111111111'
+        for good in ('/api/agents/v1/whoami', '/api/agents/v1/theses/' + ok, '/api/agents/v1/theses/%s/performance' % ok):
+            self.assertTrue(appauth.allowed(good), good)
+        for bad in ('/api/me', '/api/exchange', '/api/agents/v1/introspect', '/api/agents/v1/theses/' + ok + '/../../me',
+                    '/api/agents/v1/theses/x', '/api/agents/v1/portfolio?wallet=0x1', '/api/agents/v1/theses/%s/tracking' % ok,
+                    '/api/agents/v1/whoami/', None, 7):
+            self.assertFalse(appauth.allowed(bad), bad)
         with open(os.path.join(SRC, 'appauth.py'), encoding='utf-8') as f:
             code = f.read()
         calls = re.findall(r"self\._call\(([^)]*)\)", code)
-        self.assertEqual(calls, ["'POST', INTROSPECT, '', body", "'GET', path, grant, None"])
-        self.assertIn("if path not in ACCOUNT_PATHS:\n            raise ValueError", code)
+        # asking who a token is; SENDING a thesis the agent wrote (two paths, below); reading
+        self.assertEqual(calls, ["'POST', INTROSPECT, '', body", "'POST', path, grant, body", "'GET', target, grant, None"])
+        # The one thing this server sends under a person's connection is a thesis the agent
+        # wrote, to be checked or to be put in their library as a private DRAFT. Neither path
+        # creates a thesis, publishes one or touches money. A third path here is a decision.
+        # ... and a request for Hence to research an idea: the person's own run, under their own daily limit.
+        # ... and a trade PREPARED for the person: words Hence stores, which fill in the person's own
+        # order ticket when they open it. The path is a list of proposals, not an order endpoint:
+        # the person reviews and signs every trade in Hence (tests/test_trades.py).
+        self.assertEqual(appauth.WRITE_PATHS, ('/api/agents/v1/theses/check', '/api/agents/v1/theses/drafts', '/api/agents/v1/research',
+                                               '/api/agents/v1/trades/proposals'))
+        self.assertIn("if path not in WRITE_PATHS:\n            raise ValueError", code)
+        self.assertLess(code.index('if path not in WRITE_PATHS:'), code.index("self._call('POST', path, grant, body)"))
+        for path in appauth.WRITE_PATHS:
+            # "trades/proposals" is the one place the word may appear: a proposal is not an order
+            self.assertNotRegex(path.replace('/trades/proposals', '/proposals'),
+                                r'(trade|order|exchange|fill|withdraw|transfer|deposit|fund|sign|publish|visibility)')
+        self.assertIn("if not allowed(path):\n            raise ValueError", code)
+        self.assertLess(code.index('if not allowed(path):'), code.index("self._call('GET', target, grant, None)"))
 
-    def test_signed_in_tools_are_reads_too_and_name_their_permission(self):
+    def test_signed_in_tools_read_except_the_one_that_saves_a_draft(self):
+        writers = [t['name'] for t in tools.ACCOUNT_TOOLS + tools.RESEARCH_TOOLS + tools.TRADE_TOOLS if t['annotations']['readOnlyHint'] is not True]
+        # another tool that changes anything is a decision made here: one saves a draft, one starts the person's own
+        # research run, one PREPARES a trade for the person to review and sign in Hence (it places nothing)
+        self.assertEqual(writers, ['save_thesis_draft', 'start_thesis_research', 'propose_trade', 'propose_basket'])
+        research = tools.RESEARCH_TOOLS[0]
+        self.assertEqual((research['scope'], [t['name'] for t in tools.RESEARCH_TOOLS]), ('theses:research', ['start_thesis_research']))
+        for said in ('counts toward the person\'s daily research limit', 'ask them first', '20 to 40 minutes', 'get_thesis_guide'):
+            self.assertIn(said, research['description'])
+        for arg in research['inputSchema']['properties']:
+            self.assertNotRegex(arg, r'(?i)wallet|address|user|account|visibility|publish|engine|profile')
         for t in tools.ACCOUNT_TOOLS:
-            self.assertIs(t['annotations']['readOnlyHint'], True, t['name'])
             self.assertIs(t['annotations']['destructiveHint'], False, t['name'])
-            self.assertNotRegex(t['name'], r'(trade|order|buy|sell|withdraw|transfer|send|deposit|fund|create|approve|sign)')
-            self.assertEqual(t['scope'], 'account:read')
+            self.assertNotRegex(t['name'], r'(trade|order|buy|sell|withdraw|transfer|send|deposit|fund|create|approve|sign|publish)')
+            # a permission is a read, or the one that saves drafts
+            self.assertRegex(t['scope'], r'^([a-z]+:read|theses:write)$')
             self.assertNotIn('scope', tools.public_definition(t))
+        # the tool that writes says what it does not do, and a host is told to ask before running it
+        save = tools.find('save_thesis_draft') or next(t for t in tools.ACCOUNT_TOOLS if t['name'] == 'save_thesis_draft')
+        self.assertEqual(save['scope'], 'theses:write')
+        for said in ('private draft', 'does not create, publish or trade', 'the person has seen the thesis and agreed', 'not by Hence'):
+            self.assertIn(said, save['description'])
+        self.assertIs(next(t for t in tools.ACCOUNT_TOOLS if t['name'] == 'check_thesis')['annotations']['readOnlyHint'], True)
 
     def test_the_public_definition_hides_the_handler(self):
         d = tools.public_definition(tools.TOOLS[0])
@@ -230,7 +285,9 @@ class SearchMarkets(unittest.TestCase):
         self.assertTrue(all(m['kind'] == 'perp' for m in out['markets']))
 
     def test_every_wanted_source_down_is_an_error_not_no_matches(self):
-        routes = {'/api/screener/hl': Unavailable('Hence answered 503', 503), '/api/screener/spot': Unavailable('Hence could not be reached')}
+        routes = {'/api/screener/hl': Unavailable('Hence answered 503', 503), '/api/screener/spot': Unavailable('Hence could not be reached'),
+                  '/api/hip4/events': Unavailable('Hence answered 503', 503), '/api/solana/assets': Unavailable('Hence answered 503', 503),
+                  '/api/config': {'solanaSpot': True, 'solanaResearch': True}}
         with self.assertRaises(tools.ToolError) as ctx:
             tools.search_markets({'query': 'nvda'}, StubUpstream(routes))
         self.assertIn('No markets were read', str(ctx.exception))

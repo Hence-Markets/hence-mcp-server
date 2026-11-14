@@ -1,0 +1,105 @@
+{
+ "ok": true,
+ "at": 1794000000000,
+ "events": [
+  {
+   "id": "o1212",
+   "kind": "binary",
+   "title": "BTC above $100,000 on Dec 31",
+   "subtitle": "",
+   "venue": "Hyperliquid",
+   "expiry": "2026-12-31T16:00:00+00:00",
+   "settled": false,
+   "template": "binaryPrice",
+   "underlying": "BTC",
+   "outcomes": [
+    {
+     "outcome": 1212,
+     "label": "BTC above $100,000 on Dec 31",
+     "sides": [
+      "Yes",
+      "No"
+     ],
+     "coins": [
+      "#12120",
+      "#12121"
+     ],
+     "yes": 0.62,
+     "no": 0.38,
+     "venue": "Hyperliquid"
+    }
+   ]
+  },
+  {
+   "id": "q7",
+   "kind": "question",
+   "title": "Who wins the final?",
+   "subtitle": "",
+   "venue": "Hyperliquid",
+   "expiry": null,
+   "settled": false,
+   "template": "question",
+   "underlying": null,
+   "outcomes": [
+    {
+     "outcome": 300,
+     "label": "Team A",
+     "sides": [
+      "Yes",
+      "No"
+     ],
+     "coins": [
+      "#3000",
+      "#3001"
+     ],
+     "yes": 0.7,
+     "no": null,
+     "venue": "Hyperliquid"
+    },
+    {
+     "outcome": 301,
+     "label": "Other",
+     "sides": [
+      "Yes",
+      "No"
+     ],
+     "coins": [
+      "#3010",
+      "#3011"
+     ],
+     "yes": 0.5,
+     "no": 1.0,
+     "venue": "Hyperliquid"
+    }
+   ]
+  },
+  {
+   "id": "o900",
+   "kind": "binary",
+   "title": "ETH above $5,000 on Nov 1",
+   "subtitle": "",
+   "venue": "Hyperliquid",
+   "expiry": "2026-11-01T16:00:00+00:00",
+   "settled": true,
+   "template": "binaryPrice",
+   "underlying": "ETH",
+   "outcomes": [
+    {
+     "outcome": 900,
+     "label": "ETH above $5,000 on Nov 1",
+     "sides": [
+      "Yes",
+      "No"
+     ],
+     "coins": [
+      "#9000",
+      "#9001"
+     ],
+     "yes": null,
+     "no": null,
+     "venue": "Hyperliquid"
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,12 @@
+{
+  "name": "hence-markets",
+  "owner": { "name": "Hence Markets", "url": "https://hence.markets" },
+  "description": "Hence for coding agents: the Hence MCP server and the skill that goes with it.",
+  "plugins": [
+    {
+      "name": "hence",
+      "source": "./",
+      "description": "The Hence MCP server (public theses, tradable markets, your account) and a skill for reporting what it reads. Read-only."
+    }
+  ]
+}

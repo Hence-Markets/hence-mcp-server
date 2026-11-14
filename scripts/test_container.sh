@@ -57,10 +57,13 @@ def call(method, params, name=None):
     req = urllib.request.Request(url, data=json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params}).encode(), headers=headers)
     return json.loads(urllib.request.urlopen(req, timeout=30).read())['result']
 tools = call('tools/list', {})['tools']
-assert [t['name'] for t in tools] == ['search_theses', 'get_thesis', 'get_featured_theses', 'search_markets'], tools
+names = [t['name'] for t in tools]
+assert names == ['search_theses', 'get_thesis', 'get_featured_theses', 'search_markets', 'get_asset', 'get_thesis_guide'], names
 assert all(t['annotations']['readOnlyHint'] is True for t in tools)
-for name, args in (('search_markets', {'kind': 'perp'}), ('search_theses', {}), ('get_featured_theses', {})):
+# get_asset is here because a research answer is made of sections: one that could not be read
+# must fail the call, never come back as an asset with nothing known about it
+for name, args in (('search_markets', {'kind': 'perp'}), ('search_theses', {}), ('get_featured_theses', {}), ('get_asset', {'id': 'BTC'})):
     r = call('tools/call', {'name': name, 'arguments': args}, name)
-    assert r['isError'] is True and 'structuredContent' not in r, (name, r)
-print('switch on, app unreachable: 4 read-only tools, every call reports the failed read')
+    assert r['isError'] is True and 'structuredContent' not in r, (name, str(r)[:300])
+print('switch on, app unreachable: %d read-only tools, every call reports the failed read' % len(tools))
 PY

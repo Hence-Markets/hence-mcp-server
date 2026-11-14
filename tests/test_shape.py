@@ -131,13 +131,26 @@ class Markets(unittest.TestCase):
         self.assertEqual((m['price'], m['change_24h_pct'], m['funding_apr_pct'], m['open_interest_usd'], m['volume_24h_usd']),
                          (None, None, None, None, None))
 
-    def test_a_spot_token_carries_no_vendor_figure(self):
-        row = fixture('screener_spot')['rows'][1]
+    def test_a_spot_token_carries_its_snapshot_figures_and_says_how_old_they_can_be(self):
+        row = dict(fixture('screener_spot')['rows'][0])
         m = shape.spot_market(row, BASE)
+        self.assertEqual((m['price'], m['change_24h_pct'], m['volume_24h_usd'], m['liquidity_usd'], m['market_cap_usd'], m['holders']),
+                         (123.45, -1.5, 1000.0, 500.0, 2000.0, 10))
+        self.assertIn('can be minutes to a few hours old', m['price_note'])
+        # a figure the snapshot does not hold is None, never 0
+        bare = shape.spot_market({'address': row['address'], 'chainId': 4663, 'sym': 'X', 'price': None, 'daily': 'n/a', 'vol': float('nan')}, BASE)
+        self.assertEqual((bare['price'], bare['change_24h_pct'], bare['volume_24h_usd'], bare['liquidity_usd'], bare['holders']), (None, None, None, None, None))
+        for raw in ('daily', 'vol', 'cap', 'fdv', 'liq', 'suspiciousPct'):
+            self.assertNotIn(raw, m)                                              # the app's own field names do not leak through
+
+    def test_the_figures_can_be_withdrawn_and_then_nothing_of_them_is_left(self):
+        row = fixture('screener_spot')['rows'][1]
+        m = shape.spot_market(row, BASE, figures=False)
         self.assertIsNone(m['price'])
-        for vendor_field in ('daily', 'vol', 'cap', 'fdv', 'liq', 'holders'):
-            self.assertNotIn(vendor_field, m)
+        for field in ('change_24h_pct', 'volume_24h_usd', 'liquidity_usd', 'market_cap_usd', 'holders', 'daily', 'vol', 'cap', 'fdv', 'liq'):
+            self.assertNotIn(field, m)
         self.assertNotIn('123.45', json.dumps(m))
+        self.assertEqual(m['price_note'], 'Open the link for live price and liquidity.')
         self.assertEqual(m['venue'], 'Robinhood Chain')
         self.assertTrue(m['url'].startswith(BASE + '/m/rhc/0x'))
 
