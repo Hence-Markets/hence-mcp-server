@@ -26,7 +26,7 @@ person opens the returned link in Hence.
 | `search_theses` | Public theses, by words, basket (perps or spot) and order; paged with a cursor |
 | `get_thesis` | One thesis: the claim, holdings with weights and reasons, other baskets, sources, checkpoints, and a price history |
 | `get_featured_theses` | Today's featured selection |
-| `search_markets` | What trades on Hence and where: perpetuals with live price, funding and open interest, and Robinhood Chain spot tokens |
+| `search_markets` | What trades on Hence and where: perpetuals with live price, funding and open interest, Robinhood Chain spot tokens, and outcome (event) markets on Hyperliquid, one row per side |
 | `get_asset` | Research on one asset: its live price on each venue, 90 days of daily prices, and for a listed company its profile, analyst ratings and targets, insider trades, earnings, headlines, fundamentals and Hence's own daily analysis. Also answers for a US-listed company Hence does not trade |
 | `get_thesis_guide` | How to write a Hence thesis yourself: the method and the `hence-thesis/1` format |
 
@@ -46,7 +46,7 @@ None publishes on the agent's say-so, places an order, or moves money.
 | `save_thesis_draft` | Puts that thesis in the person's Hence library as a private draft | `theses:write` |
 | `get_thesis_research` | The state of a Hence research run: what it is doing now, or the thesis once there is one. Without a run id, what is in progress and what recently finished | `theses:read` |
 | `start_thesis_research` | Asks Hence to research an idea for the person, steered by their guidance, must-include and exclude lists and venue. Takes 20 to 40 minutes and counts toward their daily limit. Offered only with `HENCE_MCP_RESEARCH=1` | `theses:research` |
-| `propose_trade` | Prepares one perpetual order (market, side, size, leverage, market or limit) for the person to review and sign in Hence. Places nothing. Offered only with `HENCE_MCP_TRADES=1` | `trades:propose` |
+| `propose_trade` | Prepares one order for the person to review and sign in Hence: a perpetual (side, size, leverage, market or limit), or a purchase in dollars of a Robinhood Chain token or of one side of an outcome market. Places nothing. Offered only with `HENCE_MCP_TRADES=1` | `trades:propose` |
 | `propose_basket` | Prepares buying one thesis's basket: the thesis, the money put in, optionally which basket and a leverage. Buys nothing. Offered only with `HENCE_MCP_TRADES=1` | `trades:propose` |
 | `get_trade_proposals` | Where a prepared trade stands: waiting, opened, placed (and whether the venue's record confirms the fill), dismissed, expired or withdrawn. Offered only with `HENCE_MCP_TRADES=1` | `trades:propose` |
 
@@ -141,7 +141,14 @@ What this server can and cannot do:
   needs the venue's own fill record.
 - A proposal **expires** (a day by default, three at most) and stops being openable when the
   person dismisses it or disconnects the agent.
-- One perpetual order, or one thesis's basket. Single spot tokens and outcome markets are refused for now.
+- One order, or one thesis's basket. An order is a perpetual, a purchase of a Robinhood Chain
+  token, or a purchase of one side of an outcome market on Hyperliquid. Solana and Elysium
+  tokens and Polymarket are refused for now.
+- A **purchase is a buy and only a buy**: `side` is `long`, `size_usd` is the dollars to spend,
+  and a leverage or a limit order is refused by name. An outcome side cannot be shorted: its
+  other side is its own contract (`other_side` in `search_markets`).
+- A purchase the person sent that is not confirmed yet comes back as order state `pending`.
+  It is passed on as that, never as filled: it can still fail.
 
 `propose_basket` is the same idea for a thesis: the thesis id, the money to put in, and
 optionally which basket and a leverage. The link opens the thesis with the amount filled into

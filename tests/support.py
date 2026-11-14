@@ -43,4 +43,6 @@ def standard_routes():
         ws + '/theses/' + T1 + '/related': fixture('related'),
         '/api/screener/hl': fixture('screener_hl'),
         '/api/screener/spot': fixture('screener_spot'),
+        # outcome markets: one two-sided market, one question with two answers, one that has settled
+        '/api/hip4/events': fixture('hip4_events'),
     }

@@ -17,6 +17,7 @@
     hence research status <run>      how a research run is going
     hence research list              what is in progress and what recently finished
     hence trade propose perp:BTC long 200   prepare a trade to review and sign in Hence (places nothing)
+    hence trade propose hip4:1212:0 buy 25  the same for buying a spot token or one side of an outcome market
     hence trade basket <thesis> 500  prepare buying a thesis's basket, to review and sign in Hence (buys nothing)
     hence trade status <proposal>    what happened to it
     hence trade list                 the trades prepared from this terminal
@@ -71,7 +72,7 @@ def _parser():
 
     markets = sub.add_parser('markets', help='what can be traded on Hence, and where', parents=[common])
     markets.add_argument('query', nargs='*')
-    markets.add_argument('--kind', choices=['all', 'perp', 'spot'])
+    markets.add_argument('--kind', choices=['all', 'perp', 'spot', 'outcome'])
     markets.add_argument('--limit', type=int)
 
     asset = sub.add_parser('asset', help='research on one asset: price, history and, for a company, analysts, insiders, earnings, news', parents=[common])
@@ -133,12 +134,13 @@ def _parser():
     tbasket.add_argument('--note', help='why, in a sentence or two; shown in Hence beside the trade')
     tbasket.add_argument('--valid-hours', type=int, help='how long you have to act on it (default 24, at most 72)')
     tbasket.add_argument('--yes', action='store_true', help='do not ask before sending it to your Hence account')
-    propose = xsub.add_parser('propose', help='prepare one perpetual order; you review and sign it in Hence', parents=[common])
-    propose.add_argument('market', help='a market id from `hence markets`, such as perp:BTC or perp:xyz:NVDA')
-    propose.add_argument('side', choices=['long', 'short'])
-    propose.add_argument('size', type=float, help="the position's value in US dollars (not the margin)")
-    propose.add_argument('--leverage', type=int, help="leave out to keep your own setting for the market")
-    propose.add_argument('--limit', type=float, metavar='PRICE', help='make it a limit order at this price')
+    propose = xsub.add_parser('propose', help='prepare one order (a perpetual, a spot token or one side of an outcome market); you review and sign it in Hence',
+                              parents=[common])
+    propose.add_argument('market', help='a market id from `hence markets`: perp:BTC, perp:xyz:NVDA, spot:4663:0x..., hip4:1212:0')
+    propose.add_argument('side', choices=['long', 'short', 'buy'], help='long or short for a perpetual; buy for a spot token or an outcome contract')
+    propose.add_argument('size', type=float, help="a perpetual: the position's value in US dollars (not the margin). A purchase: the dollars to spend")
+    propose.add_argument('--leverage', type=int, help="perpetuals only; leave out to keep your own setting for the market")
+    propose.add_argument('--limit', type=float, metavar='PRICE', help='perpetuals only: make it a limit order at this price')
     propose.add_argument('--note', help='why, in a sentence or two; shown in Hence beside the trade')
     propose.add_argument('--valid-hours', type=int, help='how long you have to act on it (default 24, at most 72)')
     propose.add_argument('--yes', action='store_true', help='do not ask before sending it to your Hence account')
@@ -404,7 +406,10 @@ def run(argv, out=None, err=None, store=None, sender=None, open_browser=None, st
             if ns.what != 'propose':
                 raise CliError('Say `hence trade propose <market> <long|short> <size>`, `hence trade basket <thesis> <amount>`, '
                                '`hence trade status <proposal>` or `hence trade list`.')
-            request = {'market_id': ns.market, 'side': ns.side, 'size_usd': int(ns.size) if ns.size == int(ns.size) else ns.size}
+            # "buy" is this terminal's word for a purchase; the server's word for the same thing is "long". What a
+            # purchase cannot have (a short, a leverage, a limit) is sent as typed and refused by the server by name.
+            purchase = ns.side == 'buy'
+            request = {'market_id': ns.market, 'side': 'long' if purchase else ns.side, 'size_usd': int(ns.size) if ns.size == int(ns.size) else ns.size}
             if ns.leverage is not None:
                 request['leverage'] = ns.leverage
             if ns.limit is not None:
@@ -417,7 +422,7 @@ def run(argv, out=None, err=None, store=None, sender=None, open_browser=None, st
                 # it lands in the person's Hence account: they say yes first. Nothing is placed either way.
                 print('Prepare for review in Hence: %s %s, $%s%s%s' % (
                     ns.side, ns.market, ('%g' % ns.size), (' at %dx' % ns.leverage) if ns.leverage is not None else '',
-                    (', limit %g' % ns.limit) if ns.limit is not None else ', market order'), file=err)
+                    (', limit %g' % ns.limit) if ns.limit is not None else '' if purchase else ', market order'), file=err)
                 ask = confirm or (lambda: (stdin or sys.stdin).isatty() and input(
                     'This places nothing: it waits in Hence for you to review and sign. Send it? [y/N] ').strip().lower() in ('y', 'yes'))
                 if not ask():
