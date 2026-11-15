@@ -21,18 +21,23 @@
     hence trade basket <thesis> 500  prepare buying a thesis's basket, to review and sign in Hence (buys nothing)
     hence trade status <proposal>    what happened to it
     hence trade list                 the trades prepared from this terminal
+    hence trade limits               whether agent trading is on, within what limits, and what was placed
+    hence trade place perp:BTC long 200     place a REAL order now with your money, within your limits (agent trading)
+    hence trade close perp:BTC [100]        reduce (or close all of) a position now (agent trading)
     hence tools                      everything the server offers right now
     hence call <tool> --arg k=v      any tool, including ones newer than this release
 
 Add --json to any of them for the exact structured answer.
 
 Exit codes: 0 done; 1 Hence could not do it (the reason is on stderr, stdout is empty);
-2 the command was not understood; 3 this needs `hence login`.
+2 the command was not understood; 3 this needs `hence login`. `hence trade place` and
+`hence trade close` exit 0 only when the order filled, in whole or in part.
 """
 import argparse
 import json
 import os
 import re
+import secrets
 import sys
 
 from . import VERSION, auth, render
@@ -41,6 +46,7 @@ from .store import Store
 
 UUID = re.compile(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}')
 PROPOSAL = re.compile(r'pr_[A-Za-z0-9_-]{22}(?![A-Za-z0-9_-])')
+CLIENT_ID = re.compile(r'[A-Za-z0-9._-]{1,64}')
 
 
 def _parser():
@@ -124,8 +130,9 @@ def _parser():
     status.add_argument('--wait', action='store_true', help='stay and report when it finishes (checks once a minute)')
     rsub.add_parser('list', help='what is in progress and what recently finished', parents=[common])
 
-    trade = sub.add_parser('trade', help='prepare a trade to review and sign in Hence; it places nothing (needs hence login)', parents=[common])
-    xsub = trade.add_subparsers(dest='what', metavar='propose|basket|status|list')
+    trade = sub.add_parser('trade', help='prepare a trade to review and sign in Hence, or with agent trading on, place one (needs hence login)',
+                           parents=[common])
+    xsub = trade.add_subparsers(dest='what', metavar='propose|basket|status|list|limits|place|close')
     tbasket = xsub.add_parser('basket', help="prepare buying a thesis's basket; you review and sign it in Hence", parents=[common])
     tbasket.add_argument('thesis', help='a thesis id, or its Hence link')
     tbasket.add_argument('amount', type=float, help='the money put in, in US dollars')
@@ -147,6 +154,22 @@ def _parser():
     tstatus = xsub.add_parser('status', help='what happened to a prepared trade', parents=[common])
     tstatus.add_argument('proposal', help='the proposal id `hence trade propose` printed, or its Hence link')
     xsub.add_parser('list', help='the trades prepared from this terminal', parents=[common])
+    xsub.add_parser('limits', help='whether agent trading is on for this terminal, its limits, and the orders it placed', parents=[common])
+    retry = 'your own id for this order; the same id again reaches the same order, never a second one. Left out, one is made and printed'
+    tplace = xsub.add_parser('place', help='place a REAL order now, with your money, within the limits you set in Hence (agent trading)', parents=[common])
+    tplace.add_argument('market', help='a Hyperliquid perpetual from `hence markets`: perp:BTC, perp:xyz:NVDA')
+    tplace.add_argument('side', choices=['long', 'short'])
+    tplace.add_argument('size', type=float, help="the position's value in US dollars (not the margin)")
+    tplace.add_argument('--leverage', type=int, help='a whole number; Hence refuses more than your limit')
+    tplace.add_argument('--note', help='why, in a sentence or two; shown in Hence beside the order')
+    tplace.add_argument('--id', dest='client_id', metavar='CLIENT_ID', help=retry)
+    tplace.add_argument('--yes', action='store_true', help='do not ask before placing it')
+    tclose = xsub.add_parser('close', help='reduce or close a perpetual position now, within your limits (agent trading)', parents=[common])
+    tclose.add_argument('market', help='the perpetual: perp:BTC, perp:xyz:NVDA')
+    tclose.add_argument('size', nargs='?', type=float, help='how much of the position to close, in US dollars; left out, all of it')
+    tclose.add_argument('--note', help='why, in a sentence or two; shown in Hence beside the order')
+    tclose.add_argument('--id', dest='client_id', metavar='CLIENT_ID', help=retry)
+    tclose.add_argument('--yes', action='store_true', help='do not ask before placing it')
 
     call = sub.add_parser('call', help='call any tool by name', parents=[common])
     call.add_argument('tool')
@@ -277,6 +300,50 @@ def _call_signed_in(server, tool, args, store, sender):
             return Client(server, token=token, **kw).call(tool, args)
 
 
+def _dollars(v, what):
+    """A typed amount as it is sent: whole dollars as a whole number. A value that is not a
+    number of dollars at all (argparse reads "nan" and "inf" as floats) is refused here."""
+    if v != v or v in (float('inf'), float('-inf')):
+        raise CliError('%s must be a number of US dollars.' % what)
+    return int(v) if v == int(v) else v
+
+
+def _place(ns, server, store, sender, out, err, stdin, confirm):
+    """`hence trade place` and `hence trade close`: a REAL order, placed by Hence at once with the
+    person's money, within the limits they set there. The person says yes first (or typed --yes).
+    The order's own id is printed BEFORE it is sent: if the answer is lost on the way back, the
+    same command with that --id reaches the same order instead of placing a second one."""
+    cid = ns.client_id or 'cli-' + secrets.token_urlsafe(12)
+    if not CLIENT_ID.fullmatch(cid):
+        raise CliError('--id is 1 to 64 letters, digits, ".", "_" or "-".')
+    request = {'market_id': ns.market, 'client_order_id': cid}
+    if ns.what == 'close':
+        request['close'] = True
+        if ns.size is not None:
+            request['size_usd'] = _dollars(ns.size, 'The size')
+        said = 'close %s of your %s position' % (render._exact(ns.size) if ns.size is not None else 'all', ns.market)
+    else:
+        request.update(side=ns.side, size_usd=_dollars(ns.size, 'The size'))
+        if ns.leverage is not None:
+            request['leverage'] = ns.leverage
+        said = '%s %s, %s%s' % (ns.side, ns.market, render._exact(ns.size), (' at %dx' % ns.leverage) if ns.leverage is not None else '')
+    if ns.note:
+        request['note'] = ns.note
+    if not ns.yes:
+        print('Place now, for real, with your money: %s' % said, file=err)
+        ask = confirm or (lambda: (stdin or sys.stdin).isatty() and input(
+            'Hence places this at once on Hyperliquid, within the limits you set there. A filled order cannot be undone. Place it? [y/N] '
+        ).strip().lower() in ('y', 'yes'))
+        if not ask():
+            raise CliError('Not placed. To place without being asked, add --yes.')
+    print('Order id %s. If this does not finish, run the same command with --id %s: it reaches the same order, never a second one.' % (cid, cid),
+          file=err)
+    answer = _call_signed_in(server, 'place_trade', request, store, sender)
+    print(render.show('place_trade', answer, as_json=ns.json), file=out)
+    order = answer.get('order') if isinstance(answer.get('order'), dict) else {}
+    return 0 if order.get('status') in ('filled', 'partly_filled') else 1
+
+
 WAIT_EVERY_S = 60
 WAIT_LIMIT_S = 60 * 60          # research takes 20 to 40 minutes; past an hour, stop watching and say so
 
@@ -377,6 +444,11 @@ def run(argv, out=None, err=None, store=None, sender=None, open_browser=None, st
             print(render.show('get_thesis_research', state, as_json=ns.json), file=out)
             return 0 if state.get('thesis_id') else 1
         if ns.command == 'trade':
+            if ns.what == 'limits':
+                print(render.show('get_trading_status', _call_signed_in(server, 'get_trading_status', {}, store, sender), as_json=ns.json), file=out)
+                return 0
+            if ns.what in ('place', 'close'):
+                return _place(ns, server, store, sender, out, err, stdin, confirm)
             if ns.what == 'list':
                 print(render.show('get_trade_proposals', _call_signed_in(server, 'get_trade_proposals', {}, store, sender), as_json=ns.json), file=out)
                 return 0
@@ -407,7 +479,8 @@ def run(argv, out=None, err=None, store=None, sender=None, open_browser=None, st
                 return 0 if answer.get('proposed') is True else 1
             if ns.what != 'propose':
                 raise CliError('Say `hence trade propose <market> <long|short> <size>`, `hence trade basket <thesis> <amount>`, '
-                               '`hence trade status <proposal>` or `hence trade list`.')
+                               '`hence trade status <proposal>`, `hence trade list`, `hence trade limits`, '
+                               '`hence trade place <market> <long|short> <size>` or `hence trade close <market> [<size>]`.')
             # "buy" is this terminal's word for a purchase; the server's word for the same thing is "long". What a
             # purchase cannot have (a short, a leverage, a limit) is sent as typed and refused by the server by name.
             purchase = ns.side == 'buy'

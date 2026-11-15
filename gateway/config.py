@@ -88,6 +88,16 @@ def trades_active():
     return accounts_active() and _env('HENCE_MCP_TRADES', '0') == '1'
 
 
+def trading_active():
+    """Whether the tools that let a connected agent PLACE orders itself are offered: real
+    Hyperliquid perpetual orders with the person's money, within the limits the person set in
+    Hence. Its own switch, apart from preparing trades, because it is the one thing here that
+    moves money; it must match the app's agent trading switch, or the server would ask people
+    for a permission (trades:place) the app will not give. Even on, the app decides every order:
+    whether this connection may trade at all, the limits, the market and the fee."""
+    return accounts_active() and _env('HENCE_MCP_TRADING', '0') == '1'
+
+
 def resource():
     """This server's own canonical address. A person's credential is issued for exactly this
     address, and a credential issued for any other is refused."""

@@ -201,6 +201,10 @@
   .book .gap { position: absolute; top: -1px; bottom: -1px; border-radius: 4px; background: var(--line-3); }
   .book .mid { position: absolute; top: -4px; width: 2px; height: 14px; border-radius: 1px; background: var(--text); transform: translateX(-1px); }
 
+  /* how much of today's limit the agent has used, from nothing to the person's daily limit */
+  .meter { height: 6px; border-radius: 3px; background: var(--bg-2); border: 1px solid var(--line); margin: 10px 0 4px; overflow: hidden; }
+  .meter i { display: block; height: 100%; border-radius: inherit; background: var(--lav); }
+
   /* an explanation that opens where you point: on hover, on focus, on a tap */
   .tip { position: absolute; z-index: 5; max-width: min(300px, calc(100% - 12px)); background: #1b1b1f; color: #f3f3f4; border: 1px solid rgba(255,255,255,.11); border-radius: 9px;
          padding: 8px 10px; font-size: 11.5px; line-height: 1.45; box-shadow: 0 8px 24px -8px rgba(0,0,0,.7); pointer-events: none; opacity: 0; transition: opacity .14s var(--ease); }
@@ -290,10 +294,11 @@
   var home = null, ICON = '/api/icon?v=4&src=';
   function origin(url) { var safe = hence(url), m = safe ? /^https:\/\/[^\/?#\s]+/.exec(safe) : null; return m ? m[0] : null; }
   function homeOf(value) {
-    var lists = [[value], value.theses, value.markets, value.proposals, value.asset && value.asset.markets, [value.proposal]], found = null;
+    // an order the agent placed carries no link of its own: its market's address in Hence says where Hence is
+    var lists = [[value], value.theses, value.markets, value.proposals, value.asset && value.asset.markets, [value.proposal], [value.order], value.recent], found = null;
     lists.forEach(function (list) {
       if (!Array.isArray(list)) return;
-      list.forEach(function (x) { if (!found && x && typeof x === 'object') found = origin(x.url); });
+      list.forEach(function (x) { if (!found && x && typeof x === 'object') found = origin(x.url || x.market_url); });
     });
     return found;
   }
@@ -727,9 +732,9 @@
     });
     return card;
   }
-  function refused(value) {
+  function refused(value, what, word) {
     var card = el('div', 'card');
-    head(card, 'Nothing was prepared', 'Not prepared', 'neg');
+    head(card, what || 'Nothing was prepared', word || 'Not prepared', 'neg');
     var ul = el('ul');
     value.problems.forEach(function (x) {
       if (!x || !x.problem) return;
@@ -739,6 +744,110 @@
       ul.appendChild(li);
     });
     card.appendChild(ul);
+    return card;
+  }
+
+  /* An order the agent PLACED itself, with the person's money, within the limits they set in Hence.
+     What it says is the order's own status as Hence recorded the venue's answer: "Filled" only when
+     that status is a fill, and otherwise "Not filled", "Rejected" or "Unknown" with no fill figure
+     drawn at all. A figure that was not read is "n/a". Nothing on it can be changed or undone: it is
+     a record of what happened, not a ticket. */
+  var ORDER_WORDS = { filled: ['Filled', 'pos'], partly_filled: ['Partly filled', 'lav'], not_filled: ['Not filled', 'neg'], rejected: ['Rejected', 'neg'], unknown: ['Unknown', 'warn'] };
+  function orderWord(o) { return ORDER_WORDS[o.status] || ['Not read', 'warn']; }
+  function isFill(o) { return o.status === 'filled' || o.status === 'partly_filled'; }
+  // a size in the market's own units, every digit Hence gave, or n/a
+  function units(v, o) { return isNum(v) ? v.toLocaleString('en-US', { maximumFractionDigits: 8 }) + ' ' + ticker(o.market || o.market_id) : 'n/a'; }
+  // what was asked: a size, or for a close with no size, the whole position
+  function asked(o) { return isNum(o.size_usd) ? usd(o.size_usd) : o.close === true ? 'All of it' : 'n/a'; }
+  function utc(iso) { var at = Date.parse(iso); return isNum(at) ? new Date(at).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : null; }
+  // "Long BTC" in the side's colour; a close says only "Close": which way its order went is the app's to say, not this card's
+  function orderName(h, o, short) {
+    if (o.close === true) h.appendChild(el('span', 'side', 'Close '));
+    else h.appendChild(el('span', 'side ' + (o.side === 'short' ? 'short' : 'long'), o.side === 'short' ? 'Short ' : 'Long '));
+    var what = o.market || o.market_id || 'Unknown market';
+    h.appendChild(!short && String(what).length <= 26 ? el('span', 'grad', what) : document.createTextNode(what));
+  }
+  function placedOrder(o, answer) {
+    var card = el('div', 'card'), stood = orderWord(o), lev = isNum(o.leverage) ? o.leverage + '×' : 'n/a';
+    head(card, 'Placed by your agent', stood[0], stood[1]);
+    var title = el('div', 'title'), h = el('h1', '');
+    title.appendChild(logo(o.market_id, o.market_id, 'lg'));
+    orderName(h, o, false);
+    title.appendChild(h); card.appendChild(title);
+    if (o.market_id) { var id = el('div', 'by'); id.appendChild(el('code', '', o.market_id)); card.appendChild(id); }
+    // a fill shows what filled and at what price; anything else shows what was asked, and never a fill
+    var figs = el('div', 'figs');
+    (isFill(o) ? [['Filled at', px(o.avg_price)], ['Filled size', units(o.filled_size, o), usd(o.filled_usd)], ['Leverage', lev]]
+      : [['Filled', o.status === 'unknown' ? 'Not known yet' : 'Nothing'], [o.close === true ? 'Asked to close' : 'Asked', asked(o)], ['Leverage', lev]]).forEach(function (f) {
+      var fig = el('div', 'fig'); fig.appendChild(el('b', '', f[1])); fig.appendChild(el('span', '', f[0]));
+      if (f[2]) fig.appendChild(el('small', '', f[2]));
+      figs.appendChild(fig);
+    });
+    card.appendChild(figs);
+    if (o.status === 'partly_filled') card.appendChild(el('div', 'small', 'Asked: ' + asked(o) + '. The rest did not fill.'));
+    if (o.note) { card.appendChild(el('div', 'label', 'The agent\'s reason, in its own words')); card.appendChild(el('p', 'note', o.note)); }
+    var stand = el('div', 'stand' + (o.status === 'filled' ? ' ok' : stood[1] === 'neg' ? ' off' : ''));
+    stand.appendChild(el('i', '')); stand.appendChild(el('span', '', o.what_now || 'Hence did not say what happens next.'));
+    card.appendChild(stand);
+    if (o.problem) card.appendChild(el('div', 'warnline', o.problem));
+    if (answer && Array.isArray(answer.problems)) answer.problems.forEach(function (x) { if (x && x.problem) card.appendChild(el('div', 'warnline', (x.field ? x.field + ': ' : '') + x.problem)); });
+    if (answer && Array.isArray(answer.warnings)) answer.warnings.forEach(function (w) { if (typeof w === 'string' && w) card.appendChild(el('div', 'warnline', w)); });
+    if (answer && answer.already_placed === true) card.appendChild(el('div', 'small', 'Your agent asked again with the same id: this is the same order, not a second one.'));
+    if (o.fee) card.appendChild(el('div', 'small', 'Fee: ' + o.fee));
+    card.appendChild(el('div', 'small', [utc(o.placed_at), o.order_id].filter(Boolean).join(' · ')));
+    return card;
+  }
+
+  /* What the agent may place on its own right now: the limits the person set in Hence, how much of
+     today's is used, when it ends, and what it already placed. The card can change none of it: the
+     person changes it in Hence. */
+  var TRADING_WORDS = {
+    active: ['On', 'pos', 'Your agent can place orders'], not_set_up: ['Not set up', '', 'Agent trading is not set up'],
+    waiting_for_wallet: ['Waiting for your wallet', 'lav', 'Waiting for your wallet'], paused: ['Paused', 'warn', 'Agent trading is paused'],
+    expired: ['Ended', '', 'Agent trading has ended']
+  };
+  function strip(card, figures) {
+    var figs = el('div', 'figs');
+    figures.forEach(function (f) { var fig = el('div', 'fig'); fig.appendChild(el('b', '', f[1])); fig.appendChild(el('span', '', f[0])); figs.appendChild(fig); });
+    card.appendChild(figs);
+  }
+  function trading(value) {
+    var card = el('div', 'card'), w = TRADING_WORDS[value.status] || ['Not read', 'warn', 'Hence did not say whether your agent can trade'];
+    head(card, 'Agent trading', w[0], w[1]);
+    card.appendChild(el('h1', '', w[2]));
+    card.appendChild(el('div', 'by', [value.markets, value.wallet ? 'wallet ' + value.wallet : null].filter(Boolean).join(' · ')));
+    var l = value.limits && typeof value.limits === 'object' ? value.limits : null;
+    if (l) {
+      card.appendChild(el('div', 'label', 'The limits you set'));
+      strip(card, [['Per order', usd(l.max_order_usd)], ['Per day', usd(l.daily_usd)], ['Leverage up to', isNum(l.max_leverage) ? l.max_leverage + '×' : 'n/a'],
+                   ['Slippage up to', isNum(l.max_slippage_pct) ? l.max_slippage_pct + '%' : 'n/a']]);
+      card.appendChild(el('div', 'label', 'Today'));
+      strip(card, [['Used today', usd(value.used_today_usd)], ['Left today', usd(value.left_today_usd)], ['Daily limit', usd(l.daily_usd)]]);
+      // the bar is drawn only from the two figures Hence read: no use read, no bar
+      if (isNum(value.used_today_usd) && isNum(l.daily_usd) && l.daily_usd > 0) {
+        var meter = el('div', 'meter'), part = el('i', '');
+        part.style.width = Math.max(0, Math.min(100, value.used_today_usd / l.daily_usd * 100)) + '%';
+        meter.setAttribute('role', 'img'); meter.setAttribute('aria-label', usd(value.used_today_usd) + ' of ' + usd(l.daily_usd) + ' used today');
+        meter.appendChild(part); card.appendChild(meter);
+      }
+      if (value.status === 'active' && l.expires_at) clock(card.appendChild(el('div', 'small', '')), l.expires_at, function (left) { return 'Your agent can trade on its own for another ' + left + '.'; });
+    }
+    if (value.problem) card.appendChild(el('div', 'warnline', value.problem));
+    if (value.how_to) card.appendChild(el('div', 'small', value.how_to));
+    card.appendChild(el('div', 'label', 'What your agent placed'));
+    var rows = Array.isArray(value.recent) ? value.recent.filter(function (o) { return o && typeof o === 'object'; }) : [];
+    if (!rows.length) card.appendChild(el('div', 'state', 'No orders yet.'));
+    rows.forEach(function (o) {
+      var item = el('div', 'item'), top = el('div', 'top'), h = el('h2', ''), stood = orderWord(o);
+      top.appendChild(logo(o.market_id, o.market_id));
+      orderName(h, o, true);
+      h.appendChild(document.createTextNode(' · ' + (isFill(o) ? units(o.filled_size, o) + ' at ' + px(o.avg_price) : asked(o))));
+      var words = el('div', 'who');
+      words.appendChild(h); words.appendChild(el('div', 'by', [utc(o.placed_at), o.what_now].filter(Boolean).join(' · ')));
+      top.appendChild(words); top.appendChild(el('span', 'tag ' + stood[1], stood[0]));
+      item.appendChild(top);
+      card.appendChild(item);
+    });
     return card;
   }
 
@@ -1006,6 +1115,9 @@
     else if (value.proposed === false && Array.isArray(value.problems) && value.problems.length) show(refused(value));
     else if (Array.isArray(value.proposals)) show(proposals(value));
     else if (typeof value.proposal_id === 'string') show(proposal(value, null));
+    else if (value.order && typeof value.order === 'object' && typeof value.order.order_id === 'string') show(placedOrder(value.order, value));
+    else if (value.placed === false && Array.isArray(value.problems) && value.problems.length) show(refused(value, 'No order was placed', 'Not placed'));
+    else if (typeof value.status === 'string' && 'limits' in value && Array.isArray(value.recent)) show(trading(value));
     else if (Array.isArray(value.holdings) || value.title) show(thesis(value));
     else show(el('div', 'card state', 'Nothing to show for this answer.'));
   }

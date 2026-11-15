@@ -40,7 +40,7 @@ INTROSPECT = '/api/agents/v1/introspect'
 # Every path this module may read under a connection. A new signed-in tool adds its path here,
 # and tests/test_tools.py pins the list: this server can reach nothing it was not given.
 ACCOUNT_PATHS = ('/api/agents/v1/whoami', '/api/agents/v1/theses', '/api/agents/v1/portfolio', '/api/agents/v1/research',
-                 '/api/agents/v1/trades/proposals')
+                 '/api/agents/v1/trades/proposals', '/api/agents/v1/trading')
 _ID = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 ACCOUNT_PATTERNS = (re.compile(r'^/api/agents/v1/theses/%s(/performance)?$' % _ID), re.compile(r'^/api/agents/v1/research/%s$' % _ID),
                     re.compile(r'^/api/agents/v1/trades/proposals/pr_[A-Za-z0-9_-]{22}$'))
@@ -51,8 +51,16 @@ ACCOUNT_PATTERNS = (re.compile(r'^/api/agents/v1/theses/%s(/performance)?$' % _I
 # Hence stores as words and that fill in the person's own order ticket when they open it. None
 # of them publishes on the agent's say-so, and none places an order or moves money: the person
 # reviews and signs every trade in Hence, with their own wallet.
+#
+# And one path that DOES move money: an order an agent places itself (agent trading, offered
+# only with config.trading_active). It is still only words from here: this server holds no
+# key and signs nothing for a venue. Hence checks the words against the limits the person set,
+# places the order with the trading key the person approved there with their own wallet (a key
+# that cannot withdraw), and answers what the venue did. A retry with the same client_order_id
+# reaches the same order, so a lost answer never becomes a second order.
+ORDER_PATH = '/api/agents/v1/trading/orders'
 WRITE_PATHS = ('/api/agents/v1/theses/check', '/api/agents/v1/theses/drafts', '/api/agents/v1/research',
-               '/api/agents/v1/trades/proposals')
+               '/api/agents/v1/trades/proposals', ORDER_PATH)
 # what Hence may answer "no" with, in words meant for the person's agent
 REFUSALS = (400, 403, 404, 409, 413, 422)
 

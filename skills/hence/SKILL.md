@@ -1,14 +1,16 @@
 ---
 name: hence
-description: Read Hence, the app that turns a belief about the world into a researched basket of holdings (perpetuals, spot tokens, outcome markets). Use when the person asks what Hence has on a theme ("what does Hence have on AI capex?"), wants to see or compare public theses, asks where something can be traded on Hence, wants their own Hence account read from a terminal or an agent, wants a thesis written for them, or wants a trade prepared for them to review and sign in Hence. Works through the Hence MCP server or the `hence` command.
+description: Read Hence, the app that turns a belief about the world into a researched basket of holdings (perpetuals, spot tokens, outcome markets). Use when the person asks what Hence has on a theme ("what does Hence have on AI capex?"), wants to see or compare public theses, asks where something can be traded on Hence, wants their own Hence account read from a terminal or an agent, wants a thesis written for them, wants a trade prepared for them to review and sign in Hence, or, where they turned on agent trading, wants a perpetual order placed for them. Works through the Hence MCP server or the `hence` command.
 ---
 
 # Hence
 
 Hence turns a belief ("AI capex is running ahead of demand") into a researched basket of
 holdings across perpetuals, spot tokens and outcome markets, and tracks it. This skill reads
-Hence and can prepare things for the person: a draft thesis, or a trade for them to review. It
-never trades. To act on anything, the person opens the returned link in Hence and signs there.
+Hence and can prepare things for the person: a draft thesis, or a trade for them to review. To
+act on anything, the person opens the returned link in Hence and signs there. The one
+exception is agent trading: a person who turned it on in Hence for this agent lets it place
+Hyperliquid perpetual orders itself, within limits they set there (see "Placing or proposing").
 
 ## Two ways in
 
@@ -21,7 +23,8 @@ https://mcp.hence.markets/mcp
 Tools: `search_theses`, `get_thesis`, `get_featured_theses`, `search_markets`, `get_asset`, and, once the
 person has connected their Hence account, `get_my_account`, `list_my_theses`, `get_my_thesis`,
 `get_my_portfolio`, `check_thesis`, `save_thesis_draft`, `get_thesis_research` and, where they
-are switched on, `start_thesis_research`, `propose_trade`, `propose_basket` and `get_trade_proposals`.
+are switched on, `start_thesis_research`, `propose_trade`, `propose_basket`, `get_trade_proposals`,
+`get_trading_status` and `place_trade`.
 `get_thesis_guide` needs no account. Call
 `tools/list` for the current set: the server gains tools without this skill changing.
 
@@ -47,6 +50,9 @@ hence research status <run>         # how a run is going
 hence trade propose perp:BTC long 200   # prepare a trade to review and sign in Hence; places nothing
 hence trade basket <thesis> 500     # prepare buying a thesis's basket; buys nothing
 hence trade status <proposal>       # what the person did with it
+hence trade limits                  # whether agent trading is on, its limits, what was placed
+hence trade place perp:BTC long 200 # place a REAL order now (agent trading only; asks first; prints its --id)
+hence trade close perp:BTC          # close the position (or `hence trade close perp:BTC 100` for part of it)
 hence tools                         # everything the server offers right now
 hence call <tool> --arg key=value   # any tool by name
 ```
@@ -73,6 +79,8 @@ Exit codes: `0` done; `1` Hence could not do it (the reason is on stderr and std
 | "Have Hence research this" | `start_thesis_research`, then `get_thesis_research` about ten minutes later (needs sign-in; ask first, it uses one of their daily runs) |
 | "Buy this thesis with 500" / "put 1,000 into that basket" | `propose_basket` with the thesis id and the amount, and give them the link (needs sign-in) |
 | "Go long X" / "short Y with 500" / "set that trade up for me" | `search_markets` for the market, then `propose_trade`, and give them the link. Later, `get_trade_proposals` for what they did (needs sign-in) |
+| "Buy 200 of BTC now" / "close my NVDA short" (and agent trading is on) | `get_trading_status`, then `place_trade` with a new `client_order_id`, and report what filled. See "Placing or proposing" |
+| "What can you trade for me?" / "what did you place?" | `get_trading_status` |
 | "Buy 50 dollars of the X token" / "bet 25 on Yes for Z" / "what are the odds of Z?" | `search_markets` (`kind` "spot" or "outcome") for the exact market, `get_asset` for an outcome side's price line, then `propose_trade` with `side` "long" and the dollars to spend |
 
 Start broad, then go deep: search first, then `get_thesis` on the one or two that fit.
@@ -107,7 +115,8 @@ Start broad, then go deep: search first, then `get_thesis` on the one or two tha
    tasks it is told when the research finishes and tells you. Where it does not, do not wait
    in a loop: check back about every ten minutes. When they want it now or want it their way, write the thesis
    yourself instead.
-10. **Nothing here places a trade or moves money.** You can prepare ONE order with
+10. **Preparing is not placing.** Outside agent trading (below), nothing here places a trade
+    or moves money. You can prepare ONE order with
     `propose_trade` (a perpetual, a purchase of a Robinhood Chain token or of a stock on
     Solana, or a purchase of one side of an outcome market), or buying a thesis's basket with `propose_basket`: Hence stores
     it, the person opens the link, their own ticket is filled in, and they review and sign it
@@ -139,6 +148,35 @@ Start broad, then go deep: search first, then `get_thesis` on the one or two tha
     read `get_my_portfolio`. For an order `size_usd` is the position's value, not the margin;
     for a basket `amount_usd` is the money put in. Pass on every warning, and say that
     Hence's fee and the venue's fees are shown in the ticket.
+
+## Placing or proposing
+
+`place_trade` places a REAL Hyperliquid perpetual order with the person's money, at once, with
+no review step. `propose_trade` only prepares one for them to sign in Hence. Place only when
+all of these hold; otherwise propose:
+
+- **The person asked for this trade** in this conversation, or a standing instruction they gave
+  in this conversation plainly covers it ("keep my BTC long at 500, top it up if it drops").
+  Never place an idea of your own, a thesis's basket, or a trade they only discussed.
+- **Agent trading is active.** `get_trading_status` says `status` "active" and shows their
+  limits. Anything else (`not_set_up`, `waiting_for_wallet`, `paused`, `expired`) means place_trade
+  is refused: tell them what `how_to` says and propose instead.
+- **It is a perpetual on Hyperliquid** (`perp:BTC`, `perp:xyz:NVDA`). Spot tokens, outcome
+  markets and baskets are proposed, never placed.
+
+How to place:
+
+1. Make a new `client_order_id` for each order and keep it. If the answer does not come back,
+   ask again with the SAME id: it reaches the same order and never places a second one.
+2. `size_usd` is the position's value, not the margin. `close: true` reduces their position;
+   without `size_usd` it closes all of it.
+3. Report exactly what came back. `filled`: filled_size at avg_price, and the fee.
+   `partly_filled`: only that much filled, and the rest did not. `not_filled` or `rejected`: say
+   plainly it did not fill, and why. `unknown`: Hence does not know yet; do not say it filled or
+   that it did not, and check `get_trading_status` again in a minute. Never round a fill into
+   "done", and pass on every warning and problem.
+4. A refusal (not set up, paused, expired, an earlier order still being checked, a limit) means
+   no order was placed. Say why, and do not try to get around a limit by splitting the order.
 
 ## Signing in
 

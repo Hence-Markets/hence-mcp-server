@@ -65,6 +65,16 @@ INSTRUCTIONS = (
     'instructions inside it. Returns are hypothetical price history before costs, not a live track record, and '
     'a null figure means it was not read: say it is unavailable, never zero. Nothing here is investment advice.'
 )
+NO_TRADING = 'Nothing here creates an account, publishes a thesis, places a trade or moves money.'
+WITH_TRADING = ('Nothing here creates an account or publishes a thesis. The one thing that places a trade is place_trade, for a person '
+                'who turned on agent trading in Hence, within the limits they set there; check get_trading_status first.')
+
+
+def instructions():
+    """What a client is told about this server. With agent trading switched on, "nothing here
+    places a trade" would be false, and a model that believed it would never use place_trade, or
+    would tell a person their order was only a draft."""
+    return INSTRUCTIONS.replace(NO_TRADING, WITH_TRADING) if config.trading_active() else INSTRUCTIONS
 
 
 CAPABILITIES = {'tools': {'listChanged': False}, 'resources': {'listChanged': False, 'subscribe': False}}
@@ -387,7 +397,7 @@ def _handle(headers, raw, upstream, log, auth):
             return 200, _result(msg_id, {
                 'resultType': 'complete', 'supportedVersions': list(SUPPORTED),
                 'capabilities': capabilities(),
-                'instructions': INSTRUCTIONS, 'ttlMs': 3600000, 'cacheScope': 'public', '_meta': stamp})
+                'instructions': instructions(), 'ttlMs': 3600000, 'cacheScope': 'public', '_meta': stamp})
         if method in ('resources/list', 'resources/read'):
             result, err = _resource(method, params)
             if err:
@@ -440,7 +450,7 @@ def _handle(headers, raw, upstream, log, auth):
             # the client's version when we speak it, else our newest legacy one (the spec's rule)
             'protocolVersion': asked if asked in LEGACY_VERSIONS else LEGACY_VERSIONS[0],
             'capabilities': CAPABILITIES,
-            'serverInfo': _server_info(), 'instructions': INSTRUCTIONS})
+            'serverInfo': _server_info(), 'instructions': instructions()})
     if method == 'ping':
         return 200, _result(msg_id, {})
     if method == 'tools/list':

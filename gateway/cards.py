@@ -6,6 +6,10 @@ a thesis, or a list of theses, with holdings, the price history and a button tha
 a market (its price, 24 hour change, funding and open interest) or a list of markets;
 and a trade the agent prepared, with a button that opens it in Hence for the person to review
 and sign. The card places nothing and says "not placed" until the app itself says otherwise.
+With agent trading on, it also draws an order the agent placed itself (what filled, at what
+price, or plainly that it did not) and what the agent may place on its own (the person's
+limits, today's use, when it ends, and its recent orders). It never calls an order filled
+unless the order's own status says so.
 
 How it fits together:
   - a tool that has a card says so in its definition: _meta.ui.resourceUri = CARD;
@@ -31,9 +35,9 @@ from . import config
 CARD = 'ui://hence/thesis-card'
 MIME = 'text/html;profile=mcp-app'
 # the tools whose answer the card can draw: one thesis, a list of them, what can be traded
-# (one market in full, or a list), or a prepared trade
+# (one market in full, or a list), a prepared trade, or an order the agent placed and what it may place
 TOOLS = ('search_theses', 'get_thesis', 'get_featured_theses', 'search_markets', 'get_asset', 'list_my_theses', 'get_my_thesis', 'propose_trade',
-         'propose_basket', 'get_trade_proposals')
+         'propose_basket', 'get_trade_proposals', 'get_trading_status', 'place_trade')
 
 _HTML = None
 
@@ -53,8 +57,9 @@ def tool_meta(name):
 
 def listing():
     return [{'uri': CARD, 'name': 'hence-thesis-card', 'title': 'Hence thesis card',
-             'description': 'Draws a Hence thesis, a list of theses, a market with its live figures, a list of markets, or a trade prepared '
-                            'for the person to review and sign in Hence, inside the conversation.', 'mimeType': MIME}]
+             'description': 'Draws a Hence thesis, a list of theses, a market with its live figures, a list of markets, a trade prepared '
+                            'for the person to review and sign in Hence, or an order the agent placed and what it may place, inside the '
+                            'conversation.', 'mimeType': MIME}]
 
 
 def image_origins():
