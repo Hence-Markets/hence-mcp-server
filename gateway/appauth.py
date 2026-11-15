@@ -93,9 +93,10 @@ class Refused(Exception):
     built, has no price history yet, or theses are not open to this account. `str()` is Hence's
     own sentence. It is an answer, not an outage: retrying will say the same thing."""
 
-    def __init__(self, status, code, message):
+    def __init__(self, status, code, message, setup_url=None):
         super().__init__(message)
         self.status, self.code = status, code
+        self.setup_url = setup_url     # as the app sent it, unchecked: shape.setup_url decides whether it is passed on
 
 
 class Unavailable(Exception):
@@ -232,5 +233,5 @@ class AppAuth:
             raise Busy(retry if str(retry).isdigit() else '60')
         said = (data or {}).get('error_description')
         if status in REFUSALS and isinstance(error, str) and isinstance(said, str) and said.strip():
-            raise Refused(status, error, said.strip()[:400])
+            raise Refused(status, error, said.strip()[:400], data.get('setup_url') if isinstance(data.get('setup_url'), str) else None)
         raise Unavailable('Hence answered %s' % status)

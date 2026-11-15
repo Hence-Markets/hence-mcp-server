@@ -179,7 +179,7 @@ def login(server, store, sender=send, open_browser=webbrowser.open, say=print, t
         if where['scopes']:
             query['scope'] = ' '.join(where['scopes'])
         url = where['authorization_endpoint'] + ('&' if '?' in where['authorization_endpoint'] else '?') + urllib.parse.urlencode(query)
-        say('Opening Hence in your browser. Press Allow there to connect this terminal.')
+        say('Opening Hence in your browser. Sign in there with your email and the code Hence sends you, then press Allow to connect this terminal.')
         say('If it does not open, visit:\n  ' + url)
         threading.Thread(target=lambda: open_browser(url), daemon=True).start()
         answer = _wait_for_answer(httpd, timeout)

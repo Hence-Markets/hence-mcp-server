@@ -161,6 +161,63 @@ class Challenges(Env):
         self.assertIn('resource_metadata=', headers['WWW-Authenticate'])
 
 
+class SignInGuidance(Env):
+    """2026-11-16: every client gets the sign-in it can act on, and the model is told each client's step."""
+
+    def run_(self, agent, legacy=False):
+        if legacy:
+            body = json.dumps({'jsonrpc': '2.0', 'id': 9, 'method': 'tools/call', 'params': {'name': 'get_my_account', 'arguments': {}}}).encode()
+            return protocol.handle_full({'mcp-protocol-version': '2025-06-18', 'user-agent': agent}, body, self.up, auth=StubAuth())
+        return protocol.handle_full(*call_account({'user-agent': agent}), self.up, auth=StubAuth())
+
+    def test_chatgpt_gets_the_result_it_links_an_account_from(self):
+        for legacy in (False, True):
+            status, out, headers = self.run_('openai-mcp/1.0.0', legacy)
+            self.assertEqual((status, headers), (200, {}), legacy)
+            result = out['result']
+            self.assertIs(result['isError'], True)
+            self.assertEqual(result['content'][0]['text'], 'Connect your Hence account to use this.')
+            [challenge] = result['_meta']['mcp/www_authenticate']
+            self.assertTrue(challenge.startswith('Bearer error="insufficient_scope", resource_metadata="https://mcp.hence.markets/'), challenge)
+            self.assertIn('scope="account:read"', challenge)
+            self.assertIn('error_description="Connect your Hence account to use this."', challenge)
+            self.assertNotIn('structuredContent', result)
+        # a dead credential keeps its own code
+        status, out, _ = protocol.handle_full(*call_account({'user-agent': 'openai-mcp/1.0.0', 'authorization': 'Bearer ' + TOKEN}), self.up,
+                                              auth=StubAuth(connection=appauth.NotConnected()))
+        self.assertIn('error="invalid_token"', out['result']['_meta']['mcp/www_authenticate'][0])
+        # the sentence sits inside a quoted string: a quote or a backslash in it can never end the string early
+        value = protocol.challenge_result((401, 'Say "hi" \\ then', 'Bearer resource_metadata="x"'))['_meta']['mcp/www_authenticate'][0]
+        self.assertTrue(value.endswith('error_description="Say \'hi\'  then"'), value)
+
+    def test_every_other_client_still_gets_the_401_claude_signs_in_from(self):
+        for agent in ('claude-code/2.1.247', 'Claude-User', 'python-httpx/0.27', 'codex_cli_rs/0.50', '', 'Mozilla/5.0 (openai-mcp)'):
+            status, out, headers = self.run_(agent)
+            self.assertEqual(status, 401, agent)
+            self.assertIn('resource_metadata=', headers['WWW-Authenticate'])
+            self.assertNotIn('result', out)
+
+    def test_the_model_is_told_each_clients_step_and_that_the_code_is_never_its_business(self):
+        _, out = protocol.handle(*modern('server/discover'), self.up)
+        said = out['result']['instructions']
+        for step in ('Connect where it appears', 'run /mcp, choose hence and Authenticate', '`codex mcp login hence`', '`hence login`',
+                     'a code Hence emails them', 'never ask for the code', 'Public theses and markets need no sign-in'):
+            self.assertIn(step, said, step)
+        with mock.patch.dict(os.environ, {'HENCE_MCP_ACCOUNTS': '0'}):
+            _, out = protocol.handle(*modern('server/discover'), self.up)
+            self.assertNotIn('/mcp', out['result']['instructions'])        # no sign-in offered, none described
+
+    def test_each_tool_says_who_may_call_it(self):
+        _, out = protocol.handle(*modern('tools/list'), self.up)
+        for t in out['result']['tools']:
+            schemes = t['securitySchemes']
+            self.assertEqual(t['_meta']['securitySchemes'], schemes, t['name'])
+            if t['name'] == 'get_my_account':
+                self.assertEqual(schemes, [{'type': 'oauth2', 'scopes': ['account:read']}])
+            if t['name'] in ('search_theses', 'search_markets', 'get_thesis'):
+                self.assertEqual(schemes, [{'type': 'noauth'}], t['name'])
+
+
 class SignedIn(Env):
     def test_the_account_is_read_under_the_connection(self):
         auth = StubAuth()

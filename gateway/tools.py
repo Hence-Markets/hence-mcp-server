@@ -1028,7 +1028,10 @@ def place_trade(args, up, account):
         data = account.post(appauth.ORDER_PATH, body)
     except appauth.Refused as e:
         if e.status == 409 and e.code in _REFUSED_NEXT:
-            raise appauth.Refused(e.status, e.code, '%s %s' % (e, _REFUSED_NEXT[e.code]))
+            link = shape.setup_url(e.setup_url, config.public_base())
+            hand = (' Give the person this link: it opens this agent\'s trading setup in Hence, where they choose the limits and approve '
+                    'with their wallet: %s' % link) if link else ''
+            raise appauth.Refused(e.status, e.code, '%s %s%s' % (e, _REFUSED_NEXT[e.code], hand))
         raise
     out = shape.order_placed(data, config.public_base())
     if out is None:
@@ -1248,7 +1251,10 @@ def public_definition(tool):
     the card that can draw its answer in a chat, when it has one (cards.py)."""
     from . import cards
     out = {k: v for k, v in tool.items() if k not in ('handler', 'scope', 'unread')}
-    meta = cards.tool_meta(tool['name'])
-    if meta:
-        out['_meta'] = meta
+    # Who may call it (OpenAI's per-tool securitySchemes; SEP-1488 proposes the same field for MCP):
+    # a public tool runs signed out, an account tool needs a connection with its one permission.
+    # ChatGPT shows its "connect" step only for a tool declared this way. Other clients ignore it.
+    schemes = [{'type': 'oauth2', 'scopes': [tool['scope']]}] if tool.get('scope') else [{'type': 'noauth'}]
+    out['securitySchemes'] = schemes
+    out['_meta'] = dict(cards.tool_meta(tool['name']) or {}, securitySchemes=schemes)
     return out

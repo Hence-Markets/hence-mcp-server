@@ -834,6 +834,10 @@
     }
     if (value.problem) card.appendChild(el('div', 'warnline', value.problem));
     if (value.how_to) card.appendChild(el('div', 'small', value.how_to));
+    // the setup page for THIS agent, when Hence named it: one press instead of a route through Settings
+    var setup = value.setup_url ? openButton(value.setup_url, value.status === 'active' ? 'Change limits or stop in Hence'
+      : value.status === 'not_set_up' ? 'Set it up in Hence' : 'Open in Hence') : null;
+    if (setup) card.appendChild(setup);
     card.appendChild(el('div', 'label', 'What your agent placed'));
     var rows = Array.isArray(value.recent) ? value.recent.filter(function (o) { return o && typeof o === 'object'; }) : [];
     if (!rows.length) card.appendChild(el('div', 'state', 'No orders yet.'));

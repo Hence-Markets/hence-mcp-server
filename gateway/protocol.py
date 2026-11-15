@@ -70,11 +70,25 @@ WITH_TRADING = ('Nothing here creates an account or publishes a thesis. The one 
                 'who turned on agent trading in Hence, within the limits they set there; check get_trading_status first.')
 
 
+# How a person connects their account, per client (2026-11-16). The clients do not all start the sign-in
+# themselves when a tool answers "sign in": Claude on the web, desktop and phone show a Connect button,
+# but Claude Code only reports that the server needs authentication, and Codex signs in by command. So
+# the model is told the step for each, and that the step is the person's: a sign-in code never passes
+# through a conversation.
+SIGN_IN_HELP = ('Tools about the person\'s own account need them to connect their Hence account once. When a tool says they must '
+                'connect or sign in: in Claude on the web, desktop or phone they press Connect where it appears; in Claude Code they run '
+                '/mcp, choose hence and Authenticate; in Codex they run `codex mcp login hence`; in ChatGPT they connect Hence when it asks; '
+                'with the hence command line they run `hence login`. One Hence page opens: their email, a code Hence emails them, then '
+                'Allow. That step is theirs: never ask for the code. Public theses and markets need no sign-in.')
+
+
 def instructions():
     """What a client is told about this server. With agent trading switched on, "nothing here
     places a trade" would be false, and a model that believed it would never use place_trade, or
-    would tell a person their order was only a draft."""
-    return INSTRUCTIONS.replace(NO_TRADING, WITH_TRADING) if config.trading_active() else INSTRUCTIONS
+    would tell a person their order was only a draft. With sign-in on, it is told how a person
+    connects in each client (SIGN_IN_HELP)."""
+    out = INSTRUCTIONS.replace(NO_TRADING, WITH_TRADING) if config.trading_active() else INSTRUCTIONS
+    return out + ' ' + SIGN_IN_HELP if config.accounts_active() else out
 
 
 CAPABILITIES = {'tools': {'listChanged': False}, 'resources': {'listChanged': False, 'subscribe': False}}
@@ -176,6 +190,31 @@ def _challenge(status, scope, error, description):
     if error:
         parts = ['error="%s"' % error] + parts
     return status, description, 'Bearer ' + ', '.join(parts)
+
+
+# ChatGPT (and the Codex app) start their account linking from a tool RESULT, not from an HTTP 401:
+# isError, with the challenge in _meta["mcp/www_authenticate"] carrying both error and error_description
+# (developers.openai.com/apps-sdk/build/auth). Claude starts its sign-in only from the HTTP 401, and ignores
+# a challenge on a 200. One answer cannot serve both, so the OpenAI client, which names itself in its
+# User-Agent, gets the result form and every other client gets the 401 the MCP specification describes.
+# A client misread either way still gets the same sentence; only the button differs.
+OPENAI_AGENTS = ('openai-mcp',)
+
+
+def _speaks_result_challenge(headers):
+    agent = (headers or {}).get('user-agent') or ''
+    return isinstance(agent, str) and agent.lower().startswith(OPENAI_AGENTS)
+
+
+def challenge_result(challenge):
+    """A challenge (from _challenge) as the tool result ChatGPT links an account from."""
+    status, sentence, value = challenge
+    if 'error="' not in value:
+        # their form needs an error code even for "not signed in yet"; theirs is insufficient_scope
+        value = value.replace('Bearer ', 'Bearer error="insufficient_scope", ', 1)
+    value += ', error_description="%s"' % sentence.replace('\\', '').replace('"', "'")     # a quoted-string: no quote, no backslash
+    return {'content': [{'type': 'text', 'text': sentence}], 'isError': True,
+            '_meta': {'mcp/www_authenticate': [value]}}
 
 
 def _bearer(headers):
@@ -411,6 +450,9 @@ def _handle(headers, raw, upstream, log, auth):
                 return 400, _error(msg_id, HEADER_MISMATCH,
                                    'Header mismatch: Mcp-Name header does not match the tool name in the body')
             result, err, challenge = _call_tool(params, upstream, log, headers, auth)
+            if challenge and _speaks_result_challenge(headers):
+                answer = challenge_result(challenge)
+                return 200, _result(msg_id, dict(answer, resultType='complete', _meta=dict(answer['_meta'], **stamp)))
             if challenge:
                 return challenge[0], _error(msg_id, SIGN_IN, challenge[1]), {'WWW-Authenticate': challenge[2]}
             if err:
@@ -460,6 +502,8 @@ def _handle(headers, raw, upstream, log, auth):
         return 200, (_error(msg_id, err[0], err[1]) if err else _result(msg_id, result))
     if method == 'tools/call':
         result, err, challenge = _call_tool(params, upstream, log, headers, auth)
+        if challenge and _speaks_result_challenge(headers):
+            return 200, _result(msg_id, challenge_result(challenge))
         if challenge:
             return challenge[0], _error(msg_id, SIGN_IN, challenge[1]), {'WWW-Authenticate': challenge[2]}
         if err:
