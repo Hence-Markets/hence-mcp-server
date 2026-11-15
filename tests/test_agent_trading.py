@@ -462,7 +462,7 @@ class SetupLink(Case):
     def test_only_hences_own_setup_page_is_ever_passed_on(self):
         for bad in ('https://evil.example/#/settings?agent=' + GRANT, PUBLIC + '.evil.example/#/settings?agent=' + GRANT,
                     PUBLIC + '/#/settings?agent=' + GRANT + '&then=https://evil.example', PUBLIC + '/#/settings?agent=ag_short',
-                    PUBLIC + '/#/proposal/pr_x', 'javascript:alert(1)', 42, None, ''):
+                    PUBLIC + '/#/proposal/pr_x', 'javascript:alert(1)', 42, None, '', PUBLIC + '/#/settings?agent=' + GRANT + '\n'):
             self.assertIsNone(shape.setup_url(bad, PUBLIC), bad)
             got = shape.trading_status(status(setup_url=bad), PUBLIC)
             self.assertIsNotNone(got, bad)                                   # a bad link drops the link, not the status

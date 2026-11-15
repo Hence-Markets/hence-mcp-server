@@ -955,7 +955,7 @@ def setup_url(value, public_base):
     must be Hence's, whatever the answer carried. (The app adds it from 2026-11-16; older answers have none.)"""
     if not isinstance(value, str) or not value.startswith(public_base):
         return None
-    return value if _SETUP_PATH_RE.match(value[len(public_base):]) else None
+    return value if _SETUP_PATH_RE.fullmatch(value[len(public_base):]) else None     # fullmatch: `$` alone lets a trailing newline through
 _ORDER = ('order_id', 'market_id', 'market', 'side', 'close', 'size_usd', 'leverage', 'status', 'filled_size', 'avg_price', 'filled_usd',
           'venue_order_id', 'fee', 'problem', 'note', 'placed_at', 'what_now')
 _LIMITS = ('max_order_usd', 'daily_usd', 'max_leverage', 'max_slippage_pct', 'expires_at')

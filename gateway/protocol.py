@@ -212,7 +212,7 @@ def challenge_result(challenge):
     if 'error="' not in value:
         # their form needs an error code even for "not signed in yet"; theirs is insufficient_scope
         value = value.replace('Bearer ', 'Bearer error="insufficient_scope", ', 1)
-    value += ', error_description="%s"' % sentence.replace('"', "'")
+    value += ', error_description="%s"' % sentence.replace('\\', '').replace('"', "'")     # a quoted-string: no quote, no backslash
     return {'content': [{'type': 'text', 'text': sentence}], 'isError': True,
             '_meta': {'mcp/www_authenticate': [value]}}
 

@@ -186,6 +186,9 @@ class SignInGuidance(Env):
         status, out, _ = protocol.handle_full(*call_account({'user-agent': 'openai-mcp/1.0.0', 'authorization': 'Bearer ' + TOKEN}), self.up,
                                               auth=StubAuth(connection=appauth.NotConnected()))
         self.assertIn('error="invalid_token"', out['result']['_meta']['mcp/www_authenticate'][0])
+        # the sentence sits inside a quoted string: a quote or a backslash in it can never end the string early
+        value = protocol.challenge_result((401, 'Say "hi" \\ then', 'Bearer resource_metadata="x"'))['_meta']['mcp/www_authenticate'][0]
+        self.assertTrue(value.endswith('error_description="Say \'hi\'  then"'), value)
 
     def test_every_other_client_still_gets_the_401_claude_signs_in_from(self):
         for agent in ('claude-code/2.1.247', 'Claude-User', 'python-httpx/0.27', 'codex_cli_rs/0.50', '', 'Mozilla/5.0 (openai-mcp)'):
