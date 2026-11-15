@@ -13,8 +13,10 @@ the Hence app.
 public tools read what the Hence app already shows a signed-out visitor. A person can also
 connect their Hence account; then it can read their own theses and positions, and put a
 thesis the agent wrote into their library as a private draft for them to review. It cannot
-create an account, publish a thesis, place a trade or move money; to act on anything, a
-person opens the returned link in Hence.
+create an account or publish a thesis. It places a trade only where agent trading is switched
+on and the person has turned it on in Hence for that agent, within limits they set there
+([Placing a trade](#placing-a-trade-agent-trading)); otherwise, to act on anything, a person
+opens the returned link in Hence.
 
 > This replaces the earlier TypeScript server (v0.1), which wrapped a previous Hence API that
 > no longer exists. Its tool names (`hence_start_market_workflow` and the rest) are gone.
@@ -30,11 +32,11 @@ person opens the returned link in Hence.
 | `get_asset` | Research on one asset: its live price on each venue, 90 days of daily prices, and for a listed company its profile, analyst ratings and targets, insider trades, earnings, headlines, fundamentals and Hence's own daily analysis. Also answers for a US-listed company Hence does not trade |
 | `get_thesis_guide` | How to write a Hence thesis yourself: the method and the `hence-thesis/1` format |
 
-With sign-in switched on there are up to eleven more, each touching only the connected person's own account.
-Four of them change something: `save_thesis_draft` leaves a draft, `start_thesis_research` starts the
-person's own research run, and `propose_trade` and `propose_basket` prepare a trade for the person to review
-and sign in Hence.
-None publishes on the agent's say-so, places an order, or moves money.
+With sign-in switched on there are up to thirteen more, each touching only the connected person's own account.
+Five of them change something: `save_thesis_draft` leaves a draft, `start_thesis_research` starts the
+person's own research run, `propose_trade` and `propose_basket` prepare a trade for the person to review
+and sign in Hence, and `place_trade` places a real order, where agent trading is on.
+None publishes on the agent's say-so, and only `place_trade` places an order.
 
 | Tool | What it reads | Needs |
 |---|---|---|
@@ -49,6 +51,8 @@ None publishes on the agent's say-so, places an order, or moves money.
 | `propose_trade` | Prepares one order for the person to review and sign in Hence: a perpetual (side, size, leverage, market or limit), or a purchase in dollars of a Robinhood Chain token, of a stock on Solana, or of one side of an outcome market. Places nothing. Offered only with `HENCE_MCP_TRADES=1` | `trades:propose` |
 | `propose_basket` | Prepares buying one thesis's basket: the thesis, the money put in, optionally which basket and a leverage. Buys nothing. Offered only with `HENCE_MCP_TRADES=1` | `trades:propose` |
 | `get_trade_proposals` | Where a prepared trade stands: waiting, opened, placed (and whether the venue's record confirms the fill), dismissed, expired or withdrawn. Offered only with `HENCE_MCP_TRADES=1` | `trades:propose` |
+| `get_trading_status` | Whether the person has turned on agent trading for this connection, the limits they set (per order, per day, leverage, slippage, until when), how much of today's limit is used and left, and the agent's recent orders with what filled. Offered only with `HENCE_MCP_TRADING=1` | `trades:place` |
+| `place_trade` | Places a REAL Hyperliquid perpetual order with the person's money, at once: a market, a side, a size in dollars, optionally a leverage, or a close of their position. Hence checks it against their limits and answers what the venue did. Offered only with `HENCE_MCP_TRADING=1` | `trades:place` |
 
 Few tools on purpose. A caller pays for every tool description on every turn; the whole list
 is about a thousand tokens.
@@ -135,8 +139,8 @@ step.
 
 What this server can and cannot do:
 
-- It **cannot place an order.** It holds no wallet and no key, and the only thing it sends is
-  the proposal's words, to one path of the app.
+- `propose_trade` **cannot place an order.** This server holds no wallet and no key, and the
+  only thing it sends is the proposal's words, to one path of the app.
 - It **never says a trade was made** unless the app says `placed` and sends the order. That
   needs the person's own order receipt for the same market and side; `confirmed_by_venue`
   needs the venue's own fill record.
@@ -165,6 +169,44 @@ reported as bought, because the basket ticket's receipts carry no proposal id.
 
 Its own switch (`HENCE_MCP_TRADES`, which must match the app's `AGENT_TRADES_ACTIVE`) and its
 own permission, `trades:propose`.
+
+## Placing a trade (agent trading)
+
+"I set the limits, the agent trades". A person can let one connected agent place orders itself.
+They turn on agent trading for that connection in Hence: they pick limits and approve a trading
+key with their own wallet there. From then on `place_trade` places a real Hyperliquid perpetual
+order with their money, at once, with no review step in Hence. `get_trading_status` says whether
+it is on, within what, how much of today's limit is left, and what the agent already placed.
+
+**What the app enforces**, on every order, whatever an agent asks: the limits the person set
+(the most per order and per day, the highest leverage, the most slippage, and until when); one
+kind of market, Hyperliquid perpetuals; agent trading is open to the Hence team only for now;
+the trading key never leaves Hence, and it is an agent key that can place orders and cannot
+withdraw. Hence's fee is attached by the app, as on any order. Disconnecting the agent in Hence
+ends it on the next call, like every other permission.
+
+What this server does, and does not:
+
+- It **holds no key and signs nothing for a venue.** It checks that the words have the right
+  shape (a perpetual's `market_id`, a side and a size unless it is a close, a whole-number
+  leverage, an order id) and sends them to one path of the app, which decides everything about
+  the money.
+- **One order, one id.** `client_order_id` is required here, although the app would take an
+  order without one: asking again with the same id reaches the same order and never places a
+  second one, so an answer lost on the way back is safe to ask about again. The command line
+  makes one when none is given and prints it before the order is sent.
+- **A fill is said only when the order's status is one.** The status is the venue's answer as
+  Hence recorded it: `filled`, `partly_filled`, `not_filled`, `rejected` or `unknown`. Only the
+  first two carry a size and a price; an answer where the figures and the status disagree, a
+  status this server does not know, or a missing field is refused whole as unreadable, never
+  passed on in part. `unknown` means the venue's answer was lost: Hence is checking it, refuses
+  new orders until it knows, and the agent is told to say neither "filled" nor "not filled".
+- A refusal comes back in Hence's words: not set up, paused, expired, an earlier order still
+  being checked, or a limit (`problems`). Then no order was placed, and the agent is told to
+  prepare the trade with `propose_trade` instead.
+
+Its own switch (`HENCE_MCP_TRADING`, which must match the app's own agent trading switch) and its
+own permission, `trades:place`: a person who let an agent prepare trades has not let it place one.
 
 ## Cards inside the chat
 
@@ -201,6 +243,14 @@ The same page draws a trade the agent prepared (`propose_trade`, `get_trade_prop
 market, side, size, leverage and order type, the agent's reason marked as the agent's, and a
 "Review and sign in Hence" button. It says "not placed" until the app itself reports an order.
 
+With agent trading on, it draws an order the agent placed (`place_trade`): the market and side,
+what filled and at what average price, the leverage, the agent's reason, what Hence says happens
+next, and the order's problem. "Filled" only when the order's status says so; an order that did
+not fill shows "Nothing" filled and what was asked, and one whose result is not known yet says
+so. And it draws what the agent may place on its own (`get_trading_status`): the limits as
+figures, today's use against the daily limit, how long agent trading has left, and the recent
+orders. It has no button: nothing on it changes the order or the limits.
+
 ## The `hence` command
 
 The same tools from a terminal, for scripts and for coding agents without an MCP client. It is
@@ -232,6 +282,9 @@ hence trade propose perp:BTC long 200   # prepare a trade to review and sign in 
 hence trade basket <thesis> 500     # prepare buying a thesis's basket (asks first; buys nothing)
 hence trade status <proposal>       # what happened to it
 hence trade list                    # the trades prepared from this terminal
+hence trade limits                  # whether agent trading is on, its limits, and what was placed
+hence trade place perp:BTC long 200 --leverage 3   # place a REAL order now (agent trading; asks first; --id to retry)
+hence trade close perp:BTC [100]    # reduce a position, or close all of it (agent trading; asks first)
 hence tools                         # everything the server offers right now
 hence call <tool> --arg key=value   # any tool by name
 ```
@@ -318,6 +371,9 @@ connection. A disconnect takes effect on the next call, not when the token expir
    research pipeline. Results label it, and the server tells the model to report it rather
    than follow it. Account ids never leave: an author is a name.
 6. **No tool arguments in logs.** A log line is the tool, the outcome and the time taken.
+7. **An order is reported as filled only when its own status is a fill.** An order whose
+   answer could not be read is "Hence did not confirm the order", with the id to ask again
+   with, never "placed" and never "not placed".
 
 Nothing here is investment advice.
 
@@ -363,6 +419,7 @@ docker build -t hence-mcp-server . && docker run --rm -p 127.0.0.1:4340:4340 -e 
 | `HENCE_MCP_RESEARCH` | `0` | Strictly `1` offers `start_thesis_research`. Needs sign-in on, and the app's `AGENT_RESEARCH_ACTIVE=1` |
 | `HENCE_MCP_SPOT_FIGURES` | `1` | `0` withdraws spot token prices, volume, liquidity and market cap (identity and link stay) |
 | `HENCE_MCP_TRADES` | `0` | Strictly `1` offers `propose_trade`, `propose_basket` and `get_trade_proposals`. Needs sign-in on, and the app's `AGENT_TRADES_ACTIVE=1` |
+| `HENCE_MCP_TRADING` | `0` | Strictly `1` offers `get_trading_status` and `place_trade` (agent trading: real orders within the person's limits) and asks for `trades:place` at sign-in. Needs sign-in on, and the app's agent trading switch on |
 | `HENCE_MCP_RESOURCE` | `https://mcp.hence.markets/mcp` | This server's own address. A credential is issued for exactly this address |
 | `HENCE_AUTH_ISSUER` | `https://app.hence.markets` | Who signs people in |
 
@@ -415,4 +472,5 @@ skills/hence/         the skill for coding agents
 - **More to read once connected**: your theses and your portfolio.
 - **Create a thesis** from a belief.
 - **Propose a trade.** The agent prepares a basket order; you review and sign it in Hence.
-  This server will never sign anything or hold a key.
+  This server will never sign anything or hold a key; with agent trading, the key is the one
+  the person approved, and it stays in Hence.

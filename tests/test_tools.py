@@ -66,7 +66,7 @@ class ReadOnlyByConstruction(unittest.TestCase):
         # the signed-in half reaches exactly these, and every one of them is a read of the person's own account
         self.assertEqual(appauth.INTROSPECT, '/api/agents/v1/introspect')
         self.assertEqual(appauth.ACCOUNT_PATHS, ('/api/agents/v1/whoami', '/api/agents/v1/theses', '/api/agents/v1/portfolio', '/api/agents/v1/research',
-                                                 '/api/agents/v1/trades/proposals'))
+                                                 '/api/agents/v1/trades/proposals', '/api/agents/v1/trading'))
         self.assertEqual([p.pattern for p in appauth.ACCOUNT_PATTERNS],
                          [r'^/api/agents/v1/theses/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(/performance)?$',
                           r'^/api/agents/v1/research/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
@@ -90,11 +90,17 @@ class ReadOnlyByConstruction(unittest.TestCase):
         # ... and a trade PREPARED for the person: words Hence stores, which fill in the person's own
         # order ticket when they open it. The path is a list of proposals, not an order endpoint:
         # the person reviews and signs every trade in Hence (tests/test_trades.py).
+        # ... and (2026-11-16, agent trading) ONE path that places a real order: the agent's words, which Hence checks against
+        # the limits the person set and places with the trading key they approved there. This server still holds no key and
+        # signs nothing for a venue. A second path that moves money is a decision made here (tests/test_agent_trading.py).
         self.assertEqual(appauth.WRITE_PATHS, ('/api/agents/v1/theses/check', '/api/agents/v1/theses/drafts', '/api/agents/v1/research',
-                                               '/api/agents/v1/trades/proposals'))
+                                               '/api/agents/v1/trades/proposals', '/api/agents/v1/trading/orders'))
+        self.assertEqual(appauth.ORDER_PATH, '/api/agents/v1/trading/orders')
         self.assertIn("if path not in WRITE_PATHS:\n            raise ValueError", code)
         self.assertLess(code.index('if path not in WRITE_PATHS:'), code.index("self._call('POST', path, grant, body)"))
         for path in appauth.WRITE_PATHS:
+            if path == appauth.ORDER_PATH:
+                continue                         # the one path that places an order, pinned above and in tests/test_agent_trading.py
             # "trades/proposals" is the one place the word may appear: a proposal is not an order
             self.assertNotRegex(path.replace('/trades/proposals', '/proposals'),
                                 r'(trade|order|exchange|fill|withdraw|transfer|deposit|fund|sign|publish|visibility)')
@@ -102,10 +108,15 @@ class ReadOnlyByConstruction(unittest.TestCase):
         self.assertLess(code.index('if not allowed(path):'), code.index("self._call('GET', target, grant, None)"))
 
     def test_signed_in_tools_read_except_the_one_that_saves_a_draft(self):
-        writers = [t['name'] for t in tools.ACCOUNT_TOOLS + tools.RESEARCH_TOOLS + tools.TRADE_TOOLS if t['annotations']['readOnlyHint'] is not True]
+        writers = [t['name'] for t in tools.ACCOUNT_TOOLS + tools.RESEARCH_TOOLS + tools.TRADE_TOOLS + tools.TRADING_TOOLS
+                   if t['annotations']['readOnlyHint'] is not True]
         # another tool that changes anything is a decision made here: one saves a draft, one starts the person's own
-        # research run, one PREPARES a trade for the person to review and sign in Hence (it places nothing)
-        self.assertEqual(writers, ['save_thesis_draft', 'start_thesis_research', 'propose_trade', 'propose_basket'])
+        # research run, one PREPARES a trade for the person to review and sign in Hence (it places nothing), and one
+        # (agent trading) PLACES an order within the limits the person set in Hence
+        self.assertEqual(writers, ['save_thesis_draft', 'start_thesis_research', 'propose_trade', 'propose_basket', 'place_trade'])
+        destructive = [t['name'] for t in tools.ACCOUNT_TOOLS + tools.RESEARCH_TOOLS + tools.TRADE_TOOLS + tools.TRADING_TOOLS
+                       if t['annotations']['destructiveHint'] is not False]
+        self.assertEqual(destructive, ['place_trade'])           # a filled order cannot be undone: hosts that ask before such a call ask here
         research = tools.RESEARCH_TOOLS[0]
         self.assertEqual((research['scope'], [t['name'] for t in tools.RESEARCH_TOOLS]), ('theses:research', ['start_thesis_research']))
         for said in ('counts toward the person\'s daily research limit', 'ask them first', '20 to 40 minutes', 'get_thesis_guide'):

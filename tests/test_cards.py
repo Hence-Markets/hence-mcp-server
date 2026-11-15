@@ -72,14 +72,16 @@ class Served(unittest.TestCase):
         self.assertIn('resources', out['result']['capabilities'])
 
     def test_thesis_tools_point_at_the_card_and_the_rest_do_not(self):
-        with mock.patch.dict(os.environ, dict(ON, HENCE_MCP_RESEARCH='1', HENCE_MCP_TRADES='1')):
+        with mock.patch.dict(os.environ, dict(ON, HENCE_MCP_RESEARCH='1', HENCE_MCP_TRADES='1', HENCE_MCP_TRADING='1')):
             _, out = self.run_(modern('tools/list'))
         listed = {t['name']: t.get('_meta') for t in out['result']['tools']}
         with_card = sorted(name for name, meta in listed.items() if meta)
         self.assertEqual(with_card, sorted(cards.TOOLS))
-        # theses, and a trade PREPARED for the person: its card says "not placed" and opens Hence (tests/test_trades.py)
-        self.assertEqual(with_card, ['get_asset', 'get_featured_theses', 'get_my_thesis', 'get_thesis', 'get_trade_proposals', 'list_my_theses',
-                                     'propose_basket', 'propose_trade', 'search_markets', 'search_theses'])
+        # theses, and a trade PREPARED for the person: its card says "not placed" and opens Hence (tests/test_trades.py);
+        # and (2026-11-16) an order the agent PLACED and what it may place: the card says what filled only when the
+        # order's own status is a fill (tests/test_agent_trading.py)
+        self.assertEqual(with_card, ['get_asset', 'get_featured_theses', 'get_my_thesis', 'get_thesis', 'get_trade_proposals', 'get_trading_status',
+                                     'list_my_theses', 'place_trade', 'propose_basket', 'propose_trade', 'search_markets', 'search_theses'])
         for name in with_card:
             self.assertEqual(listed[name], {'ui': {'resourceUri': 'ui://hence/thesis-card'}})
         # nothing else that writes, and nothing that reads the person's money, draws itself into a chat

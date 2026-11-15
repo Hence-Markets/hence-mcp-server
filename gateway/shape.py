@@ -932,6 +932,202 @@ def trade_list(data):
     return {'proposals': rows}
 
 
+# ── orders an agent places itself (agent trading) ─────────────────────────────────────────────
+# Real money. The app places the order and records what the venue said; this server passes that
+# record on field by field, and only when every field is what the contract says it is. A record
+# it cannot read is refused whole, never passed on in part: a half-read order is how a lost
+# answer, or a fill that did not happen, would reach a person as a fact.
+PERP_ID_RE = re.compile(r'^perp:(?:[a-z0-9]{1,12}:)?[A-Za-z0-9._-]{1,40}$')
+ORDER_ID_RE = re.compile(r'^ao_[A-Za-z0-9_-]{1,64}$')
+CLIENT_ORDER_ID_RE = re.compile(r'^[A-Za-z0-9._-]{1,64}$')
+# the venue's answer as the app recorded it. Only the first two are fills.
+ORDER_STATES = ('filled', 'partly_filled', 'not_filled', 'rejected', 'unknown')
+FILLS = ('filled', 'partly_filled')
+TRADING_STATES = ('active', 'not_set_up', 'waiting_for_wallet', 'paused', 'expired')
+# a wallet as the app shortens it ("0x12…abcd"): a whole address never reaches a model through these tools
+SHORT_WALLET_RE = re.compile(r'^0x[0-9a-fA-F]{1,8}(?:…|\.\.\.)[0-9a-fA-F]{1,8}$')
+_ORDER = ('order_id', 'market_id', 'market', 'side', 'close', 'size_usd', 'leverage', 'status', 'filled_size', 'avg_price', 'filled_usd',
+          'venue_order_id', 'fee', 'problem', 'note', 'placed_at', 'what_now')
+_LIMITS = ('max_order_usd', 'daily_usd', 'max_leverage', 'max_slippage_pct', 'expires_at')
+
+
+_BAD = object()              # a field that is missing, or is not what the contract says: the whole answer is refused
+
+
+def _positive(v):
+    """A finite number above 0, or None."""
+    v = num(v)
+    return v if v is not None and v > 0 else None
+
+
+def _number(v):
+    v = num(v)
+    return _BAD if v is None else v
+
+
+def _above_zero(v):
+    v = _positive(v)
+    return _BAD if v is None else v
+
+
+def _whole(low):
+    return lambda v: v if isinstance(v, int) and not isinstance(v, bool) and v >= low else _BAD
+
+
+def _words(limit):
+    # text, or null for an empty one; anything that is not text cannot be read
+    return lambda v: text(v, limit) if isinstance(v, str) else _BAD
+
+
+def _nullable(data, key, read):
+    """The value of a key that must be present and may be null, as `read` passes it on; _BAD
+    when the key is missing or its value is not one `read` accepts."""
+    if key not in data:
+        return _BAD
+    return None if data[key] is None else read(data[key])
+
+
+def agent_order(data, public_base):
+    """One order an agent placed, as the app recorded it, or None when it cannot be read. Every
+    field of the contract must be present (a nullable one as null), the status must be one this
+    server knows, and the figures must agree with it: a fill has a size and a price; a status
+    that is not a fill has neither. An order whose status this server does not know is not
+    passed on as anything."""
+    if not isinstance(data, dict) or any(k not in data for k in _ORDER):
+        return None
+    status = data['status']
+    if status not in ORDER_STATES or not isinstance(data['close'], bool) or data['side'] not in ('long', 'short'):
+        return None
+    if not (isinstance(data['order_id'], str) and ORDER_ID_RE.match(data['order_id'])) \
+            or not (isinstance(data['market_id'], str) and PERP_ID_RE.match(data['market_id'])):
+        return None
+    market, placed_at, what_now = text(data['market'], 60), text(data['placed_at'], 40), text(data['what_now'], 600)
+    if not market or not placed_at or not what_now:
+        return None
+    out = {'order_id': data['order_id'], 'market_id': data['market_id'], 'market': market, 'side': data['side'], 'close': data['close'],
+           'status': status}
+    readers = {'size_usd': _above_zero, 'leverage': _whole(1), 'filled_size': _number, 'avg_price': _number, 'filled_usd': _number,
+               'venue_order_id': _whole(0), 'fee': _words(200), 'problem': _words(400), 'note': _words(280)}
+    for key, read in readers.items():
+        out[key] = _nullable(data, key, read)
+        if out[key] is _BAD:
+            return None
+    if out['size_usd'] is None and not data['close']:
+        return None                                  # an order that opens a position always asks for a size; only "close all" has none
+    if status in FILLS:
+        # a fill is stated only with what filled and at what price: the person is told those two numbers
+        if _positive(out['filled_size']) is None or _positive(out['avg_price']) is None or out['filled_usd'] is not None and out['filled_usd'] <= 0:
+            return None
+    elif out['avg_price'] is not None or any(out[k] not in (None, 0) for k in ('filled_size', 'filled_usd')):
+        return None                                  # "did not fill" (or "not known") beside a fill size is a contradiction: neither is trusted
+    out.update(placed_at=placed_at, what_now=what_now,
+               # where this market is in Hence, made the way search_markets makes it (the card draws the market's logo from Hence's address)
+               market_url=perp_url(public_base, data['market_id'][5:]))
+    return out
+
+
+def _order_next(order, already, problems):
+    """What the agent is told to say about an order, from its status and nothing else. A fill is
+    reported as one only when the status is one; every other status is said plainly."""
+    said = {
+        'filled': 'The order filled. Tell the person exactly what filled: filled_size at avg_price (filled_usd is its value), and the fee. '
+                  'Pass on every warning.',
+        'partly_filled': 'Only part of the order filled: filled_size at avg_price. The rest of the size asked for did not fill. Tell the person '
+                         'both, plainly, and pass on every warning.',
+        # said without "placed", "bought" or "went through", even in the negative: a model repeats the word it was handed
+        'not_filled': 'It did not fill. Say so plainly, and what what_now says.',
+        'rejected': 'It was rejected and did not fill. Tell the person why (`problem`) and what what_now says.',
+        'unknown': 'Hence does not know yet what happened to this order: the venue\'s answer was lost and Hence is checking it. Do not tell '
+                   'the person it did or did not fill: say that Hence is checking. Hence refuses new orders until it knows: call '
+                   'get_trading_status in a minute and report what it says then.',
+    }[order['status']]
+    if already:
+        said = 'This client_order_id was used before: this is that same order, not a new one. ' + said
+    if problems:
+        said += ' Tell the person each of `problems` too.'
+    return said
+
+
+def order_placed(data, public_base):
+    """The app's answer to an order an agent placed. None when it cannot be read: whether an
+    order exists, and what it did, is never guessed. Any order carried is read by agent_order,
+    and its status, not `ok`, decides what the agent is told."""
+    if not isinstance(data, dict) or not all(isinstance(data.get(k), bool) for k in ('ok', 'placed', 'already_placed')):
+        return None
+    if not isinstance(data.get('problems'), list) or not isinstance(data.get('warnings'), list):
+        return None
+    problems = [{'field': text(p.get('field')) or '', 'problem': text(p.get('problem'), 400)} for p in data['problems']
+                if isinstance(p, dict) and text(p.get('problem'))]
+    order = None
+    if data.get('order') is not None:
+        order = agent_order(data['order'], public_base)
+        if order is None:
+            return None
+    if (data['placed'] or data['already_placed']) and order is None:
+        return None                                  # an order said to exist that the answer does not carry
+    if data['ok']:
+        if order is None or problems:
+            return None
+    elif not (problems or order) or order is not None and order['status'] in FILLS:
+        # a refusal that gives no reason is not one anyone can act on, and one beside a fill contradicts it.
+        # A refusal that carries an order that did not fill (the venue said no) is read: its status says what happened.
+        return None
+    out = {'ok': data['ok'], 'placed': data['placed'], 'already_placed': data['already_placed'], 'problems': problems,
+           'warnings': [text(w, 400) for w in data['warnings'] if isinstance(w, str) and text(w)], 'order': order}
+    out['next'] = _order_next(order, data['already_placed'], problems) if order else (
+        'No order was placed. Fix every problem and ask again, or prepare it with propose_trade for the person to sign in Hence.')
+    return out
+
+
+def trading_status(data, public_base):
+    """Whether this connection may place orders on its own right now, within what, and what it
+    already placed, as the app answered it. None when it cannot be read. "active" is passed on
+    only with its limits: an agent is never told it may trade without being told how much."""
+    keys = ('status', 'wallet', 'markets', 'limits', 'used_today_usd', 'left_today_usd', 'problem', 'how_to', 'recent')
+    if not isinstance(data, dict) or any(k not in data for k in keys) or data['status'] not in TRADING_STATES:
+        return None
+    markets, how_to = text(data['markets'], 200), text(data['how_to'], 600)
+    if not markets or not how_to or not isinstance(data['recent'], list):
+        return None
+    wallet = data['wallet']
+    if wallet is not None and not (isinstance(wallet, str) and SHORT_WALLET_RE.match(wallet)):
+        return None
+    limits = data['limits']
+    if limits is not None:
+        if not isinstance(limits, dict) or any(k not in limits for k in _LIMITS):
+            return None
+        figures = {k: num(limits[k]) for k in ('max_order_usd', 'daily_usd', 'max_slippage_pct')}
+        lev = limits['max_leverage']
+        if any(v is None or v < 0 for v in figures.values()) or not (isinstance(lev, int) and not isinstance(lev, bool) and lev >= 1) \
+                or not text(limits['expires_at'], 40):
+            return None
+        limits = dict(figures, max_leverage=lev, expires_at=text(limits['expires_at'], 40))
+    elif data['status'] == 'active':
+        return None
+    out = {'status': data['status'], 'wallet': wallet, 'markets': markets, 'limits': limits}
+    for key, read in (('used_today_usd', _number), ('left_today_usd', _number), ('problem', _words(400))):
+        out[key] = _nullable(data, key, read)
+        if out[key] is _BAD:
+            return None
+    recent = [agent_order(o, public_base) for o in data['recent'][:10]]
+    if any(o is None for o in recent):
+        return None                                  # one unreadable order: the list is not shown as the whole of what was done
+    out.update(how_to=how_to, recent=recent)
+    if data['status'] == 'active':
+        out['next'] = ('Agent trading is active: place_trade places Hyperliquid perpetual orders for this person within `limits`, and Hence '
+                       'refuses anything outside them. Place only what the person asked for in this conversation. left_today_usd is what is '
+                       'left of today\'s limit; a null figure was not read and is not zero.')
+    else:
+        out['next'] = ('Agent trading is not active (%s), so place_trade will be refused. Tell the person what how_to says%s. Until then, '
+                       'prepare trades with propose_trade for them to sign in Hence.' % (data['status'], ' and what problem says' if out['problem'] else ''))
+    if recent:
+        out['next'] += (' In `recent`, only "filled" and "partly_filled" are fills; "unknown" means Hence is still finding out, and is not a fill.')
+    if any(o['status'] == 'unknown' for o in recent):
+        # the app's rule: while an order's result is not known, it takes no new order from this agent
+        out['next'] += ' While an order is "unknown", Hence refuses new orders: tell the person, and check again in a minute.'
+    return out
+
+
 # ── research on one asset ───────────────────────────────────────────────────────────────────
 ASSET_SECTIONS = ('quote', 'history', 'profile', 'analysts', 'insiders', 'earnings', 'news', 'fundamentals', 'analysis')
 ASSET_HOW_TO_READ = ('A section that is null and listed in `unavailable` could not be read: say so, do not guess. One listed in `not_applicable` '

@@ -405,6 +405,86 @@ def trade(value):
     return '\n'.join(out)
 
 
+def _units(v):
+    """A size in the market's own units, with every digit the server gave."""
+    return ('%.12g' % v) if isinstance(v, (int, float)) and not isinstance(v, bool) else NA
+
+
+def _order(o):
+    """One order an agent placed: what was asked, and what the venue did as Hence recorded it. A
+    fill is printed only for a status that is one; every other status says plainly what it is."""
+    market = text(o.get('market') or o.get('market_id'))
+    what = ('Close %s' % market) if o.get('close') is True else '%s %s' % ('Short' if o.get('side') == 'short' else 'Long', market)
+    asked = _exact(o.get('size_usd')) if isinstance(o.get('size_usd'), (int, float)) else ('all of it' if o.get('close') is True else NA)
+    out = ['%s  %s%s  [%s]' % (what, asked, (' at %sx' % o['leverage']) if isinstance(o.get('leverage'), int) else '', text(o.get('status')))]
+    status = o.get('status')
+    if status in ('filled', 'partly_filled'):
+        out.append('  filled %s %s at %s, worth %s' % (_units(o.get('filled_size')), market, price(o.get('avg_price')), _exact(o.get('filled_usd'))))
+        if status == 'partly_filled':
+            out.append('  the rest of the size asked for did not fill')
+    elif status == 'unknown':
+        out.append('  Not known yet whether it went through: Hence is checking. See `hence trade limits` in a minute.')
+    else:
+        out.append('  Did not fill.')
+    for key in ('problem', 'fee', 'note'):
+        if isinstance(o.get(key), str) and o[key]:
+            out.append('  %s: %s' % (key, o[key]))
+    venue = o.get('venue_order_id')
+    out.append('  order: %s   venue order: %s   at: %s' % (text(o.get('order_id')), venue if isinstance(venue, int) and not isinstance(venue, bool) else NA,
+                                                         text(o.get('placed_at'))))
+    if isinstance(o.get('what_now'), str) and o['what_now']:
+        out.append('  ' + o['what_now'])
+    if isinstance(o.get('market_url'), str) and o['market_url']:
+        out.append('  market in Hence: ' + o['market_url'])
+    return '\n'.join(out)
+
+
+def placed(value):
+    """`place_trade`: the order as Hence answered it, or why no order was placed."""
+    out = []
+    order = value.get('order') if isinstance(value.get('order'), dict) else None
+    if order:
+        lines = _order(order).split('\n')
+        if value.get('already_placed') is True:
+            lines.insert(1, '  (asked again with the same id: this is the same order, not a second one)')
+        out += lines
+    problems = [p for p in value.get('problems') or [] if isinstance(p, dict)]
+    if problems:
+        out.append('%d problem%s.%s' % (len(problems), '' if len(problems) == 1 else 's', '' if order else ' No order was placed.'))
+        out += ['  %s%s' % ((p.get('field') + ': ') if p.get('field') else '', text(p.get('problem'))) for p in problems]
+    warnings = [w for w in value.get('warnings') or [] if isinstance(w, str)]
+    if warnings:
+        out.append('\nWorth knowing:')
+        out += ['  - ' + w for w in warnings]
+    if isinstance(value.get('client_order_id'), str):
+        out.append('client order id: %s' % value['client_order_id'])
+    # `next` is said to an agent; everything else the server sent is printed
+    extra = footer(value, {'ok', 'placed', 'already_placed', 'problems', 'warnings', 'order', 'next', 'client_order_id'})
+    return '\n'.join(out) + ('\n\n' + extra if extra else '')
+
+
+def trading(value):
+    """`get_trading_status`: whether this connection may place orders on its own, within what."""
+    wallet = value.get('wallet')
+    out = ['Agent trading: %s  (%s%s)' % (text(value.get('status')), text(value.get('markets')),
+                                         (', wallet %s' % wallet) if isinstance(wallet, str) and wallet else '')]
+    limits = value.get('limits') if isinstance(value.get('limits'), dict) else None
+    if limits:
+        lev = limits.get('max_leverage')
+        out.append('  limits: %s per order, %s per day, leverage up to %s, slippage up to %s, until %s' % (
+            _exact(limits.get('max_order_usd')), _exact(limits.get('daily_usd')), ('%sx' % lev) if isinstance(lev, int) and not isinstance(lev, bool) else NA,
+            pct(limits.get('max_slippage_pct'), signed=False), text(limits.get('expires_at'))))
+        out.append('  today: %s used, %s left' % (_exact(value.get('used_today_usd')), _exact(value.get('left_today_usd'))))
+    if isinstance(value.get('problem'), str) and value['problem']:
+        out.append('  problem: ' + value['problem'])
+    if isinstance(value.get('how_to'), str) and value['how_to']:
+        out.append('  ' + value['how_to'])
+    recent = [o for o in value.get('recent') or [] if isinstance(o, dict)]
+    out.append(('\nRecent orders\n' + '\n\n'.join(_order(o) for o in recent)) if recent else '\nNo orders placed by this agent yet.')
+    extra = footer(value, {'status', 'wallet', 'markets', 'limits', 'used_today_usd', 'left_today_usd', 'problem', 'how_to', 'recent', 'next'})
+    return '\n'.join(out) + ('\n\n' + extra if extra else '')
+
+
 def asset(value):
     """`get_asset`: what Hence knows about one asset. A section that was not read is said, by name."""
     a = value.get('asset') if isinstance(value.get('asset'), dict) else {}
@@ -485,7 +565,8 @@ def tools(found):
 VIEWS = {'search_theses': theses, 'get_featured_theses': lambda v: theses(v, with_return=True), 'get_thesis': thesis,
          'search_markets': markets, 'get_asset': asset, 'get_my_account': account, 'list_my_theses': my_theses, 'get_my_thesis': my_thesis,
          'get_my_portfolio': portfolio, 'get_thesis_guide': guide, 'check_thesis': check, 'save_thesis_draft': check,
-         'start_thesis_research': research, 'get_thesis_research': research, 'propose_trade': trade, 'propose_basket': trade, 'get_trade_proposals': trade}
+         'start_thesis_research': research, 'get_thesis_research': research, 'propose_trade': trade, 'propose_basket': trade, 'get_trade_proposals': trade,
+         'place_trade': placed, 'get_trading_status': trading}
 
 
 def show(tool, value, as_json=False):

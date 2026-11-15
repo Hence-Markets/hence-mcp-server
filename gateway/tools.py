@@ -74,6 +74,16 @@ def _unknown_keys(args, schema):
         raise ToolError('Unknown argument: %s.' % ', '.join(extra))
 
 
+def _no_trades_here():
+    """What a read says about trading from here. Until agent trading this server could place
+    nothing and said so; with it switched on, "cannot place trades" would be false and would
+    hide place_trade from the model, so the sentence says what it can do and for whom."""
+    if config.trading_active():
+        return ('This server places an order only with place_trade: one Hyperliquid perpetual, for a person who turned on agent trading '
+                'in Hence.')
+    return 'This server cannot place trades.'
+
+
 # ── results pages ───────────────────────────────────────────────────────────────────────────
 # The app pages a search through a saved selection ("snapshot") so page 2 is page 2 of the same
 # list. The cursor carries that selection and the filters it was made with; the app refuses a
@@ -202,7 +212,7 @@ def get_thesis(args, up):
     base = config.public_base()
     out = shape.thesis_detail(detail, base, with_paper=want_paper)
     out['note'] = shape.DISCLAIMER
-    out['how_to_trade'] = 'Open the url in Hence to review and buy this basket. This server cannot place trades.'
+    out['how_to_trade'] = 'Open the url in Hence to review and buy this basket. ' + _no_trades_here()
     # The price history is a second read. If it fails the thesis is still worth returning, but
     # the result must say the figures are missing rather than leave them out silently.
     if want_perf:
@@ -423,7 +433,7 @@ def search_markets(args, up):
                     'serves them (one row per stock), and outcome (event) markets on Hyperliquid. '
                     'An outcome market is listed one row per side: each side is its own contract, bought and never shorted. '
                     'Elysium tokens and Polymarket are in the Hence app but not in this search yet.',
-        'how_to_trade': 'Open a market\'s url in Hence to trade it. This server cannot place trades.'
+        'how_to_trade': 'Open a market\'s url in Hence to trade it. ' + _no_trades_here()
                         + (' It can prepare ONE order for the person to review and sign in Hence (propose_trade): a perpetual, a purchase of a '
                            'Robinhood Chain token or of a stock on Solana, or a purchase of one side of an outcome market.' if config.trades_active() else ''),
     }
@@ -632,7 +642,7 @@ def get_my_thesis(args, up, account):
                         'change': shape.text(v.get('change_reason'), 300)}
                        for v in (detail.get('versions') if isinstance(detail.get('versions'), list) else [])[:20] if isinstance(v, dict)]
     out['note'] = shape.DISCLAIMER
-    out['how_to_trade'] = 'Open the url in Hence to review and buy this basket. This server cannot place trades.'
+    out['how_to_trade'] = 'Open the url in Hence to review and buy this basket. ' + _no_trades_here()
     if want_perf:
         # A second read. If it fails, or Hence says there is no history yet, the thesis is still
         # worth returning; the result says the figures are missing rather than leaving them out.
@@ -930,12 +940,118 @@ def get_trade_proposals(args, up, account):
     return out
 
 
-def _tool(name, title, description, schema, handler, scope=None, writes=False, unread=None):
+# ── orders the agent places itself (agent trading) ───────────────────────────────────────────
+# Real money, at once. The person turns agent trading on for this connection in Hence: they pick
+# limits and approve a trading key with their own wallet there. From then on Hence places the
+# orders this agent asks for, within those limits, and refuses the rest. Everything about the
+# money is decided by the app (whether this connection may trade, the limits, the market, the
+# fee); this server checks only that the words have the right shape, sends them to one path, and
+# passes on what the venue did, field by field (shape.agent_order). It holds no key. Offered only
+# while its own switch is on (config.trading_active).
+
+TRADING_STATUS = {'type': 'object', 'additionalProperties': False, 'properties': {}}
+PLACE_TRADE = {
+    'type': 'object',
+    'additionalProperties': False,
+    # side and size_usd are required unless `close`: said below and checked by the handler, not with a
+    # combinator, because some hosts refuse a tool whose schema has anyOf or if/then at the top level
+    'required': ['market_id', 'client_order_id'],
+    'properties': {
+        'market_id': {'type': 'string', 'maxLength': 80,
+                      'description': 'A Hyperliquid perpetual exactly as search_markets returned it (perp:BTC, perp:xyz:NVDA). Nothing else can '
+                                     'be placed here.'},
+        'side': {'type': 'string', 'enum': ['long', 'short'], 'description': 'Required unless `close` is true.'},
+        'size_usd': {'type': 'number', 'exclusiveMinimum': 0,
+                     'description': 'The position\'s value in US dollars, not the margin (at 3x leverage a 300 position needs about 100 of margin). '
+                                    'Required unless `close` is true; with `close`, how much of the position to close (left out: all of it).'},
+        'close': {'type': 'boolean', 'description': 'True reduces the person\'s existing position in this market instead of opening one.'},
+        'leverage': {'type': 'integer', 'minimum': 1, 'maximum': 50,
+                     'description': 'Opening only. Hence refuses more than the person\'s limit allows.'},
+        'note': {'type': 'string', 'maxLength': 280, 'description': 'Why, in one or two sentences. The person sees it in Hence, marked as your words.'},
+        'client_order_id': {'type': 'string', 'pattern': '^[A-Za-z0-9._-]{1,64}$',
+                            'description': 'Your own id for this order, new for each order: letters, digits, ".", "_" or "-". Asking again with '
+                                           'the same id reaches the same order and never places a second one, so reuse it on a retry.'},
+    },
+}
+
+
+def _order_request(args):
+    """The order as the app is sent it, or a ToolError. Only the shape is checked here: whether
+    this person may place it, and how much, is the app's to decide."""
+    _unknown_keys(args, PLACE_TRADE)
+    market_id = _string(args, 'market_id', 80)
+    if not shape.PERP_ID_RE.match(market_id):
+        raise ToolError('`market_id` must be a Hyperliquid perpetual exactly as search_markets returned it (perp:BTC, perp:xyz:NVDA). '
+                        'Only perpetuals can be placed here; for anything else, use propose_trade.')
+    cid = args.get('client_order_id')
+    # Required here although the app takes an order without one: without it, an answer lost on the way back
+    # (a timeout after Hence placed the order) leaves an agent that asks again placing a second order.
+    if not isinstance(cid, str) or not shape.CLIENT_ORDER_ID_RE.match(cid):
+        raise ToolError('`client_order_id` is required: 1 to 64 letters, digits, ".", "_" or "-". Make one up for this order and reuse it '
+                        'if you ask again: the same id reaches the same order, never a second one.')
+    close = _boolean(args, 'close', False)
+    side = _choice(args, 'side', ('long', 'short'), None)
+    size = args.get('size_usd')
+    if size is not None and shape._positive(size) is None:
+        raise ToolError('`size_usd` must be a number of US dollars above 0.')
+    leverage = _integer(args, 'leverage', 1, 50, None)
+    note = _string(args, 'note', 280)
+    if not close and side is None:
+        raise ToolError('`side` is required (long or short), unless `close` is true.')
+    if not close and size is None:
+        raise ToolError('`size_usd` is required unless `close` is true: the position\'s value in US dollars, not the margin.')
+    if close and leverage is not None:
+        raise ToolError('`leverage` is for opening a position. Leave it out with `close`.')
+    body = {'market_id': market_id, 'client_order_id': cid}
+    for key, value in (('side', side), ('size_usd', size), ('leverage', leverage), ('note', note)):
+        if value not in (None, ''):
+            body[key] = value
+    if close:
+        body['close'] = True
+    return body
+
+
+# The app's word for each refusal of a whole order, and what the agent does next. Only the codes
+# of the contract get a next step; any other refusal is passed on in Hence's own words.
+_REFUSED_NEXT = {
+    'not_set_up': 'No order was placed. Tell the person; until agent trading is on, prepare trades with propose_trade for them to sign in Hence.',
+    'paused': 'No order was placed. Tell the person why it is paused; until it is on again, prepare trades with propose_trade.',
+    'expired': 'No order was placed. Tell the person; they can turn agent trading on again in Hence. Until then, use propose_trade.',
+    'earlier_order_unknown': 'No new order was placed. Hence is still finding out what happened to an earlier order: call get_trading_status '
+                             'in a minute, tell the person what it says, and do not send this order again until that order is known.',
+}
+
+
+def place_trade(args, up, account):
+    body = _order_request(args)
+    try:
+        data = account.post(appauth.ORDER_PATH, body)
+    except appauth.Refused as e:
+        if e.status == 409 and e.code in _REFUSED_NEXT:
+            raise appauth.Refused(e.status, e.code, '%s %s' % (e, _REFUSED_NEXT[e.code]))
+        raise
+    out = shape.order_placed(data, config.public_base())
+    if out is None:
+        raise appauth.Unavailable('Hence gave an answer that could not be read (order)')
+    out['client_order_id'] = body['client_order_id']      # what was sent: the id to ask again with
+    return out
+
+
+def get_trading_status(args, up, account):
+    _unknown_keys(args, TRADING_STATUS)
+    out = shape.trading_status(account.get('/api/agents/v1/trading'), config.public_base())
+    if out is None:
+        raise appauth.Unavailable('Hence gave an answer that could not be read (agent trading)')
+    return out
+
+
+def _tool(name, title, description, schema, handler, scope=None, writes=False, unread=None, destructive=False):
     tool = {
         'name': name, 'title': title, 'description': description, 'inputSchema': schema,
         # writes: this tool changes something for the person (hosts ask before running it).
         # Saving the same thesis twice updates one draft, so it is idempotent; nothing is deleted.
-        'annotations': {'title': title, 'readOnlyHint': not writes, 'destructiveHint': False,
+        # destructive: what it does cannot be undone (a filled order); a host that asks before such a call asks here.
+        'annotations': {'title': title, 'readOnlyHint': not writes, 'destructiveHint': destructive,
                         'idempotentHint': True, 'openWorldHint': True},
         'handler': handler,
     }
@@ -1081,10 +1197,46 @@ TRADE_TOOLS = [
 ]
 
 
+# Offered only while config.trading_active(): the agent places orders itself, with the person's
+# money, within the limits they set in Hence. Its own permission (trades:place), apart from
+# preparing trades, so a person who allowed an agent to prepare trades has not let it place one.
+TRADING_TOOLS = [
+    _tool('get_trading_status', 'What you may trade on your own',
+          'What you may do on your own right now, and what you already did: whether the person has turned on agent trading for this '
+          'connection in Hence (`status`), the markets it covers, the limits they set (per order, per day, leverage, slippage, until '
+          'when), how much of today\'s limit is used and left, and your recent orders with what filled. If `status` is not "active", '
+          'place_trade will be refused: tell the person what `how_to` says, and use propose_trade instead. A null figure was not read: '
+          'it is not zero.',
+          TRADING_STATUS, get_trading_status, scope='trades:place', unread='Agent trading was not read.'),
+    _tool('place_trade', 'Place a trade for the person',
+          'Places a REAL order with the person\'s money, immediately: a Hyperliquid perpetual, placed by Hence with no review step and '
+          'no signature from the person. Use it only when the person asked for this trade in this conversation, or a standing instruction '
+          'they gave in this conversation covers it, AND agent trading is active (call get_trading_status first if unsure). Otherwise do '
+          'not: prepare it with propose_trade for them to review and sign in Hence. Find the market with search_markets first. Hence '
+          'checks the order against the limits the person set and refuses what is outside them (`problems`). Always pass a '
+          'client_order_id, and reuse it if you ask again: the same id reaches the same order, never a second one. `size_usd` is the '
+          'position\'s value, not the margin; `close` reduces the existing position instead of opening one. Report the result exactly as '
+          'returned: the status, filled_size and avg_price. If the status is not "filled" or "partly_filled", say plainly that it did not '
+          'fill, or for "unknown" that Hence does not know yet. Pass on every warning.',
+          PLACE_TRADE, place_trade, scope='trades:place', writes=True, destructive=True,
+          unread='Hence did not confirm the order. Ask again with the same client_order_id: it reaches the same order, never a second one.'),
+]
+
+# Said in propose_trade's description only while place_trade is offered: a description that names
+# a tool the server does not offer sends a model to call it and be told it does not exist.
+PLACE_DIRECTLY = ' If the person has turned on agent trading in Hence and wants a perpetual order done now, place_trade places it directly.'
+
+
+def _trade_tools():
+    if not config.trading_active():
+        return TRADE_TOOLS
+    return [dict(t, description=t['description'] + PLACE_DIRECTLY) if t['name'] == 'propose_trade' else t for t in TRADE_TOOLS]
+
+
 def listed():
     """The tools this server offers right now, in a stable order."""
     return (TOOLS + (ACCOUNT_TOOLS if config.accounts_active() else []) + (RESEARCH_TOOLS if config.research_active() else [])
-            + (TRADE_TOOLS if config.trades_active() else []))
+            + (_trade_tools() if config.trades_active() else []) + (TRADING_TOOLS if config.trading_active() else []))
 
 
 def find(name):
