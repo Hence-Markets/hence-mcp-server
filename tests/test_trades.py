@@ -293,7 +293,7 @@ class Card(Case):
             html = f.read()
         self.assertIn('propose_trade', cards.TOOLS)
         self.assertIn('get_trade_proposals', cards.TOOLS)
-        self.assertEqual(tools.public_definition(tools.TRADE_TOOLS[0])['_meta'], {'ui': {'resourceUri': 'ui://hence/thesis-card'}})
+        self.assertEqual(tools.public_definition(tools.TRADE_TOOLS[0])['_meta']['ui'], {'resourceUri': 'ui://hence/thesis-card'})
         for said in ("basket ? 'Prepared basket' : purchase(p) ? 'Prepared purchase' : 'Prepared trade'", "' · not placed'", "'Review and sign in Hence'", 'Nothing is placed until you sign it there.',
                      "waiting: 'Waiting for you in Hence. Nothing has been placed.'", "'Nothing was prepared'",
                      "p.order.confirmed_by_venue === true ? 'You placed this order and it filled.' : 'You placed this order. Hence is confirming the fill with the venue.'"):

@@ -443,6 +443,56 @@ class Status(Case):
         self.assertIn('Agent trading was not read.', text)
 
 
+class SetupLink(Case):
+    """2026-11-16: the app names the page where the person sets this agent's trading up (setup_url). The agent hands
+    them that one link instead of a route through Settings; it is passed on only as Hence's own page for an agent."""
+    LINK = PUBLIC + '/#/settings?agent=' + GRANT
+
+    def test_the_status_passes_the_link_on_and_says_to_give_it(self):
+        got = self.value('get_trading_status', {}, App({STATUS: status(status='not_set_up', limits=None, wallet=None, recent=[],
+                                                                        setup_url=self.LINK)}, scopes=SCOPES))
+        self.assertEqual(got['setup_url'], self.LINK)
+        self.assertIn('give them setup_url', got['next'])
+        self.assertIn('you cannot do that part for them', got['next'])
+        # an older app that names no page: the status still reads, with no link and no sentence about one
+        got = self.value('get_trading_status', {}, App({STATUS: status(status='not_set_up', limits=None, wallet=None, recent=[])}, scopes=SCOPES))
+        self.assertIsNone(got['setup_url'])
+        self.assertNotIn('setup_url', got['next'])
+
+    def test_only_hences_own_setup_page_is_ever_passed_on(self):
+        for bad in ('https://evil.example/#/settings?agent=' + GRANT, PUBLIC + '.evil.example/#/settings?agent=' + GRANT,
+                    PUBLIC + '/#/settings?agent=' + GRANT + '&then=https://evil.example', PUBLIC + '/#/settings?agent=ag_short',
+                    PUBLIC + '/#/proposal/pr_x', 'javascript:alert(1)', 42, None, ''):
+            self.assertIsNone(shape.setup_url(bad, PUBLIC), bad)
+            got = shape.trading_status(status(setup_url=bad), PUBLIC)
+            self.assertIsNotNone(got, bad)                                   # a bad link drops the link, not the status
+            self.assertIsNone(got['setup_url'], bad)
+        self.assertEqual(shape.setup_url(self.LINK, PUBLIC), self.LINK)
+
+    def test_a_refusal_the_person_fixes_carries_the_link_and_no_other_does(self):
+        said = 'Trading is not turned on for this agent.'
+        text = self.refusal('place_trade', ASK, App({ORDERS: appauth.Refused(409, 'not_set_up', said, self.LINK)}, scopes=SCOPES))
+        self.assertTrue(text.startswith(said + ' No order was placed.'), text)
+        self.assertTrue(text.endswith(self.LINK), text)
+        text = self.refusal('place_trade', ASK, App({ORDERS: appauth.Refused(409, 'not_set_up', said, 'https://evil.example/x')}, scopes=SCOPES))
+        self.assertNotIn('evil', text)
+        self.assertNotIn('Give the person this link', text)
+        # the app's answer is read into the refusal as it was sent, and checked only when passed on
+        with self.assertRaises(appauth.Refused) as caught:
+            appauth.AppAuth._answer(409, {'error': 'not_set_up', 'error_description': said, 'setup_url': self.LINK}, {})
+        self.assertEqual(caught.exception.setup_url, self.LINK)
+
+    def test_the_card_and_the_command_offer_it(self):
+        with open(os.path.join(os.path.dirname(__file__), '..', 'data', 'thesis-card.html'), encoding='utf-8') as f:
+            html = f.read()
+        self.assertIn("var setup = value.setup_url ? openButton(value.setup_url, value.status === 'active' ? 'Change limits or stop in Hence'", html)
+        self.assertIn("value.status === 'not_set_up' ? 'Set it up in Hence' : 'Open in Hence')", html)
+        out = render.trading(dict(shape.trading_status(status(setup_url=self.LINK), PUBLIC)))
+        self.assertIn('Change the limits or stop it: ' + self.LINK, out)
+        out = render.trading(dict(shape.trading_status(status(status='not_set_up', limits=None, wallet=None, recent=[], setup_url=self.LINK), PUBLIC)))
+        self.assertIn('Set it up: ' + self.LINK, out)
+
+
 class TheCard(unittest.TestCase):
     def setUp(self):
         with open(os.path.join(HERE, '..', 'data', 'thesis-card.html'), encoding='utf-8') as f:
@@ -452,7 +502,7 @@ class TheCard(unittest.TestCase):
         self.assertIn('place_trade', cards.TOOLS)
         self.assertIn('get_trading_status', cards.TOOLS)
         for t in tools.TRADING_TOOLS:
-            self.assertEqual(tools.public_definition(t)['_meta'], {'ui': {'resourceUri': 'ui://hence/thesis-card'}})
+            self.assertEqual(tools.public_definition(t)['_meta']['ui'], {'resourceUri': 'ui://hence/thesis-card'})
 
     def test_a_placed_order_is_drawn_and_a_fill_only_from_a_fill(self):
         html = self.html

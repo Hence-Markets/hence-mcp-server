@@ -946,6 +946,16 @@ FILLS = ('filled', 'partly_filled')
 TRADING_STATES = ('active', 'not_set_up', 'waiting_for_wallet', 'paused', 'expired')
 # a wallet as the app shortens it ("0x12…abcd"): a whole address never reaches a model through these tools
 SHORT_WALLET_RE = re.compile(r'^0x[0-9a-fA-F]{1,8}(?:…|\.\.\.)[0-9a-fA-F]{1,8}$')
+_SETUP_PATH_RE = re.compile(r'^/#/settings\?agent=ag_[A-Za-z0-9_-]{20}$')
+
+
+def setup_url(value, public_base):
+    """The page where the person sets up (or changes, or stops) this agent's trading, as the app named it,
+    or None. Passed on only as exactly that page on the app's own address: a link an agent hands a person
+    must be Hence's, whatever the answer carried. (The app adds it from 2026-11-16; older answers have none.)"""
+    if not isinstance(value, str) or not value.startswith(public_base):
+        return None
+    return value if _SETUP_PATH_RE.match(value[len(public_base):]) else None
 _ORDER = ('order_id', 'market_id', 'market', 'side', 'close', 'size_usd', 'leverage', 'status', 'filled_size', 'avg_price', 'filled_usd',
           'venue_order_id', 'fee', 'problem', 'note', 'placed_at', 'what_now')
 _LIMITS = ('max_order_usd', 'daily_usd', 'max_leverage', 'max_slippage_pct', 'expires_at')
@@ -1112,14 +1122,17 @@ def trading_status(data, public_base):
     recent = [agent_order(o, public_base) for o in data['recent'][:10]]
     if any(o is None for o in recent):
         return None                                  # one unreadable order: the list is not shown as the whole of what was done
-    out.update(how_to=how_to, recent=recent)
+    out.update(how_to=how_to, setup_url=setup_url(data.get('setup_url'), public_base), recent=recent)
     if data['status'] == 'active':
         out['next'] = ('Agent trading is active: place_trade places Hyperliquid perpetual orders for this person within `limits`, and Hence '
                        'refuses anything outside them. Place only what the person asked for in this conversation. left_today_usd is what is '
                        'left of today\'s limit; a null figure was not read and is not zero.')
     else:
-        out['next'] = ('Agent trading is not active (%s), so place_trade will be refused. Tell the person what how_to says%s. Until then, '
-                       'prepare trades with propose_trade for them to sign in Hence.' % (data['status'], ' and what problem says' if out['problem'] else ''))
+        out['next'] = ('Agent trading is not active (%s), so place_trade will be refused. Tell the person what how_to says%s%s. Until then, '
+                       'prepare trades with propose_trade for them to sign in Hence.'
+                       % (data['status'], ' and what problem says' if out['problem'] else '',
+                          ', and give them setup_url: it opens this agent\'s trading setup in Hence, where they choose the limits and approve '
+                          'with their wallet (you cannot do that part for them)' if out['setup_url'] else ''))
     if recent:
         out['next'] += (' In `recent`, only "filled" and "partly_filled" are fills; "unknown" means Hence is still finding out, and is not a fill.')
     if any(o['status'] == 'unknown' for o in recent):

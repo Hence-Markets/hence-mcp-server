@@ -176,7 +176,10 @@ own permission, `trades:propose`.
 They turn on agent trading for that connection in Hence: they pick limits and approve a trading
 key with their own wallet there. From then on `place_trade` places a real Hyperliquid perpetual
 order with their money, at once, with no review step in Hence. `get_trading_status` says whether
-it is on, within what, how much of today's limit is left, and what the agent already placed.
+it is on, within what, how much of today's limit is left, and what the agent already placed. It
+also carries `setup_url`, the page in Hence that opens this agent's trading setup, so the agent
+hands the person one link; a refusal they fix there (not set up, paused, ended) carries it too.
+Only that page on the Hence app's own address is passed on.
 
 **What the app enforces**, on every order, whatever an agent asks: the limits the person set
 (the most per order and per day, the highest leverage, the most slippage, and until when); one
@@ -249,7 +252,8 @@ next, and the order's problem. "Filled" only when the order's status says so; an
 not fill shows "Nothing" filled and what was asked, and one whose result is not known yet says
 so. And it draws what the agent may place on its own (`get_trading_status`): the limits as
 figures, today's use against the daily limit, how long agent trading has left, and the recent
-orders. It has no button: nothing on it changes the order or the limits.
+orders. Its one button opens the setup page in Hence ("Set it up in Hence", or "Change limits or
+stop in Hence"): nothing on the card itself changes the order or the limits.
 
 ## The `hence` command
 
@@ -322,8 +326,23 @@ claude mcp add --transport http hence https://mcp.hence.markets/mcp
 ```
 
 For any other agent, copy the `skills/hence` folder into its skills directory and add the
-server address above to its MCP settings. Signing in to a Hence account happens in the
-browser the first time a tool needs it (in Claude Code, through `/mcp`).
+server address above to its MCP settings. Public theses and markets work with no sign-in.
+
+The first time a tool needs the person's account, they connect it once. How each client starts
+that, and what this server sends it:
+
+| Client | The person | This server answers a signed-out account tool with |
+|---|---|---|
+| Claude (web, desktop, phone) | Presses **Connect** where it appears; the call then runs again on its own | HTTP `401` and `WWW-Authenticate` |
+| Claude Code | Runs `/mcp`, chooses `hence`, then Authenticate | HTTP `401` and `WWW-Authenticate` |
+| Codex | Runs `codex mcp login hence` | HTTP `401` and `WWW-Authenticate` |
+| ChatGPT | Connects Hence when it asks | A tool error carrying the challenge in `_meta["mcp/www_authenticate"]`, the form ChatGPT links accounts from (its client names itself `openai-mcp` in its User-Agent) |
+| `hence` command | Runs `hence login` | (the command signs in itself) |
+
+Every tool also says who may call it (`securitySchemes`: `noauth`, or `oauth2` with its one
+permission). Whichever client, one Hence page opens: the person's email, a six-digit code Hence
+emails them, what the agent is asking for, then Allow, and back to the agent. The server tells
+the model these steps, and that the code is never its business.
 
 ## Connecting a Hence account
 

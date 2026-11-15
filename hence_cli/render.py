@@ -479,9 +479,11 @@ def trading(value):
         out.append('  problem: ' + value['problem'])
     if isinstance(value.get('how_to'), str) and value['how_to']:
         out.append('  ' + value['how_to'])
+    if isinstance(value.get('setup_url'), str) and value['setup_url']:
+        out.append('  ' + ('Change the limits or stop it: ' if value.get('status') == 'active' else 'Set it up: ') + value['setup_url'])
     recent = [o for o in value.get('recent') or [] if isinstance(o, dict)]
     out.append(('\nRecent orders\n' + '\n\n'.join(_order(o) for o in recent)) if recent else '\nNo orders placed by this agent yet.')
-    extra = footer(value, {'status', 'wallet', 'markets', 'limits', 'used_today_usd', 'left_today_usd', 'problem', 'how_to', 'recent', 'next'})
+    extra = footer(value, {'status', 'wallet', 'markets', 'limits', 'used_today_usd', 'left_today_usd', 'problem', 'how_to', 'setup_url', 'recent', 'next'})
     return '\n'.join(out) + ('\n\n' + extra if extra else '')
 
 

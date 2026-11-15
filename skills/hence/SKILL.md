@@ -160,7 +160,9 @@ all of these hold; otherwise propose:
   Never place an idea of your own, a thesis's basket, or a trade they only discussed.
 - **Agent trading is active.** `get_trading_status` says `status` "active" and shows their
   limits. Anything else (`not_set_up`, `waiting_for_wallet`, `paused`, `expired`) means place_trade
-  is refused: tell them what `how_to` says and propose instead.
+  is refused: give them `setup_url` (it opens this agent's trading setup in Hence, where they
+  choose the limits and approve with their wallet; you cannot do that part), or tell them what
+  `how_to` says when there is no link, and propose instead.
 - **It is a perpetual on Hyperliquid** (`perp:BTC`, `perp:xyz:NVDA`). Spot tokens, outcome
   markets and baskets are proposed, never placed.
 
@@ -180,11 +182,21 @@ How to place:
 
 ## Signing in
 
-`get_my_account` and later account tools need the person's Hence account. With an MCP client,
-the client opens Hence in the browser the first time such a tool is called; the person presses
-Allow. With the command, run `hence login`. Either way they can disconnect at any time in
-Hence under Settings, or with `hence logout`. Never ask the person for a password, a code or a
-token, and never paste one into a command.
+`get_my_account` and later account tools need the person's Hence account, connected once. Public
+theses and markets need nothing. When a tool says they must connect or sign in, tell them the
+step for the client they are in:
+
+- **Claude** on the web, desktop or phone: press **Connect** where it appears. The call runs
+  again on its own afterwards.
+- **Claude Code**: run `/mcp`, choose `hence`, then Authenticate.
+- **Codex**: run `codex mcp login hence`.
+- **ChatGPT**: connect Hence when it asks.
+- **The `hence` command**: run `hence login`.
+
+One Hence page opens: their email, a six-digit code Hence emails them, then Allow, and back to
+the chat. A new email makes a new Hence account there. That step is theirs: never ask for the
+code, a password or a token, and never paste one into a command. They can disconnect at any
+time in Hence under Settings, or with `hence logout`.
 
 ## Coverage, so you do not overclaim
 
