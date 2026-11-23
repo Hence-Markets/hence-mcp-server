@@ -101,7 +101,9 @@
   .logo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; background: #fff; padding: 6%; user-select: none; -webkit-user-drag: none; }
   .logo.lg { width: 34px; height: 34px; font-size: 14px; }
   .stack { display: inline-flex; align-items: center; padding-right: 5px; }
-  .stack .logo { width: 20px; height: 20px; font-size: 9px; margin-right: -5px; box-shadow: 0 0 0 2px var(--bg); }
+  .stack .logo { width: 20px; height: 20px; font-size: 9px; margin-right: -5px; box-shadow: 0 0 0 2px var(--bg); transition: transform .12s var(--ease); }
+  .stack .logo[tabindex] { cursor: help; }
+  .stack .logo[tabindex]:hover, .stack .logo[tabindex]:focus-visible { z-index: 1; transform: translateY(-1px) scale(1.15); outline: none; }
 
   /* holdings: Hence's allocation bar (a monochrome ramp, shorts hatched) over one row per holding */
   .alloc { display: flex; gap: 3px; height: 10px; margin: 0 0 6px; }
@@ -127,6 +129,14 @@
   .fig small { display: block; font-size: 10.5px; color: var(--dim); margin-top: 2px; }
   .pos { color: var(--up); } .neg { color: var(--down); } .na { color: var(--dim); }
   .small { font-size: 11.5px; color: var(--dim); margin: 8px 0 0; }
+  .back { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 10px -6px; padding: 4px 10px 4px 8px; border: 0; border-radius: 999px; background: none; color: var(--dim); font: inherit; font-size: 12px; cursor: pointer; }
+  .back::before { content: "\2190"; }
+  .back:hover, .back:focus-visible { background: var(--bg-2); color: var(--text); outline: none; }
+  [aria-busy="true"] { opacity: .55; cursor: progress; }
+  .sym.go { cursor: pointer; border-radius: 6px; }
+  .sym.go:hover, .sym.go:focus-visible { text-decoration: underline; text-underline-offset: 3px; outline: none; }
+  .unopened { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; font-size: 11.5px; color: var(--dim); margin: 2px 0 8px; }
+  .unopened code { font: inherit; color: var(--text); user-select: all; -webkit-user-select: all; overflow-wrap: anywhere; }
   .warnline { display: flex; gap: 8px; font-size: 12px; line-height: 1.45; color: var(--warn); background: var(--warn-bg); border-radius: 9px; padding: 8px 10px; margin: 8px 0 0; }
   .warnline::before { content: "!"; flex: none; display: grid; place-items: center; width: 14px; height: 14px; margin-top: 1px; border-radius: 50%; border: 1px solid currentColor;
                       font-family: var(--mono); font-size: 9px; font-weight: 700; }
@@ -224,6 +234,14 @@
      Hence users. A figure that was not read is shown as "n/a", never as zero. */
   var root = document.getElementById('root');
   var nextId = 1, waiting = {}, canOpen = false;
+  /* Going from one thing to the next INSIDE the card (2026-11-23): a person clicks a thesis in a list and
+     reads it here, clicks one of its holdings and reads that asset here, and steps back. The card asks
+     Hence for it THROUGH the chat (the chat makes the call, under the person's own connection); this page
+     still reaches no address itself. It may ask for three things, all of them reads, named in READS and
+     nowhere else. It saves nothing, prepares no trade and places no order: those stay with the person, in
+     Hence. `shown` is the answer on screen and `trail` the ones "Back" returns to. */
+  var canCall = false, shown = null, trail = [], READS = { get_thesis: true, get_my_thesis: true, get_asset: true };
+  var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
   function post(message) { window.parent.postMessage(message, '*'); }
   function request(method, params) {
@@ -246,17 +264,74 @@
   function tone(v) { return isNum(v) ? (v > 0 ? 'pos' : v < 0 ? 'neg' : '') : 'na'; }
   function hence(url) { return typeof url === 'string' && /^https:\/\/[^\s"'<>]+$/.test(url) ? url : null; }
 
-  // Makes an <a> open a Hence address through the host. False (and no link) when the address is not a plain https one.
-  function linkTo(a, url) {
+  /* Makes an <a> open a Hence address. False (and no link) when the address is not a plain https one.
+
+     A click must never do NOTHING. Until 2026-11-23 it could: a chat that does not open links for a card
+     left the plain link to do it, and a card's frame is not allowed to open a window, so the click was
+     swallowed without a word; and a chat that answered "could not open it" was not listened to at all.
+     Now: a chat that opens links is asked (it may show the person a confirmation, and their "no" is
+     final: nothing is opened behind it). A chat that does not is tried directly. Whenever the address did
+     not open, it is shown under what was clicked, as text the person can copy. */
+  function tell(a, text, url) {
+    var note = a.nextSibling && a.nextSibling.className === 'unopened' ? a.nextSibling : null;
+    if (!note) { note = el('div', 'unopened'); if (a.parentNode) a.parentNode.insertBefore(note, a.nextSibling); }
+    note.textContent = '';
+    note.appendChild(el('span', '', text));
+    if (url) note.appendChild(el('code', '', url));
+    reportSize();
+  }
+  function shut(a, url) { tell(a, 'This chat did not open the link. Copy it to open it in Hence:', url); }
+  // `inCard`, when given, is tried first: it draws the thing here and returns true, or returns false and the link is opened.
+  function linkTo(a, url, inCard) {
     var safe = hence(url);
     if (!safe) return false;
     a.href = safe; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    function open() {
+      if (canOpen) {
+        request('ui/open-link', { url: safe }).then(function (r) { if (r && r.isError) shut(a, safe); },
+          function (e) { if (!/denied|cancel/i.test(String(e && e.message))) shut(a, safe); });       // the person's own "no" needs no note
+        return;
+      }
+      var opened = null;
+      try { opened = window.open(safe, '_blank'); if (opened) opened.opener = null; } catch (e) { opened = null; }
+      if (!opened) shut(a, safe);
+    }
     a.addEventListener('click', function (ev) {
-      if (!canOpen) return;                       // no host support: the plain link does it
       ev.preventDefault();
-      request('ui/open-link', { url: safe }).catch(function () { window.open(safe, '_blank', 'noopener'); });
+      if (inCard && inCard(open)) return;
+      open();
     });
     return true;
+  }
+  /* Asks Hence for `tool` through the chat and draws the answer here. True when it was asked (the click is
+     spent); false when this chat lets a card ask for nothing, and the caller opens Hence instead. The node
+     clicked says it is busy until the answer comes. An answer that is a refusal is shown as Hence's own
+     sentence under what was clicked; a call that could not be made at all falls back to `otherwise`. */
+  function ask(tool, args, origin, otherwise) {
+    if (!canCall || READS[tool] !== true) return false;
+    if (origin.getAttribute('aria-busy') === 'true') return true;
+    origin.setAttribute('aria-busy', 'true');
+    request('tools/call', { name: tool, arguments: args }).then(function (result) {
+      origin.removeAttribute('aria-busy');
+      var value = result && result.structuredContent;
+      if (!result || result.isError || !value || typeof value !== 'object') {
+        var text = result && Array.isArray(result.content) ? result.content.map(function (c) { return c && c.type === 'text' ? c.text : ''; }).join(' ').trim() : '';
+        tell(origin, text || 'Hence could not answer. Nothing was opened.');
+        return;
+      }
+      if (shown) trail.push(shown);
+      render(result, true);
+    }, function () { origin.removeAttribute('aria-busy'); if (otherwise) otherwise(); else tell(origin, 'This chat could not ask Hence for it. Nothing was opened.'); });
+    return true;
+  }
+  function back() { var before = trail.pop(); if (before) render(before, true); }
+  // What get_asset is asked for a holding, or null when this page cannot say which asset it is (then the name is not a link).
+  function assetId(h) {
+    var id = String(h.instrument_id || h.market_id || ''), t = ticker(h.symbol), T = t.toUpperCase();
+    if (/^perp:(?:[a-z0-9]{1,12}:)?[A-Za-z0-9._\/-]{1,40}$/.test(id) || /^hip4:\d{1,9}:[01]$/.test(id)) return id;
+    if (!/^[A-Za-z0-9-]{1,9}$/.test(t) || !/^(spot|stock|fund):/.test(id)) return null;
+    // a wrapped coin is read as the coin; a stock by its ticker, marked as the company (the same ticker is often a token too)
+    return Object.prototype.hasOwnProperty.call(WRAPPED, T) ? 'perp:' + WRAPPED[T] : T + '.US';
   }
   function openButton(url, label) {
     var a = el('a', 'open', label || 'Open in Hence');
@@ -303,22 +378,38 @@
     return found;
   }
   function ticker(sym) { return String(sym === undefined || sym === null ? '' : sym).split(':').pop(); }
-  // where Hence keeps this asset's logo, most likely first: its venue's own icon, then the company's or the coin's
-  function sources(id, sym) {
-    var ok = /^[A-Za-z0-9._-]{1,24}$/, t = ticker(sym), market = String(id === undefined || id === null ? '' : id), out = [];
-    if (!ok.test(t)) return out;
+  /* Where Hence keeps this asset's logo, most likely first. A COMPANY's logo is asked for only where the
+     market says it is a company (a builder venue's perpetual, a token on a venue that lists stocks), and
+     a COIN's only where it is a coin. The same ticker is often both: INDA is an India fund and an
+     unrelated token, and until 2026-11-23 a list row, which carried no market id, asked the coin source
+     for every ticker and drew Robinhood's feather on the India fund. A wrong logo is worse than the
+     lettered tile, so a ticker this page cannot place is asked of Hyperliquid's own icons and nothing
+     else. `venue` is the fallback for an answer that carries no market id. */
+  var WRAPPED = { WETH: 'ETH', WBTC: 'BTC', WSOL: 'SOL', WHYPE: 'HYPE' };      // a wrapped coin wears the coin's own logo
+  function sources(id, sym, venue) {
+    var ok = /^[A-Za-z0-9._-]{1,24}$/, t = ticker(sym), T = t.toUpperCase(), market = String(id === undefined || id === null ? '' : id);
+    var place = String(venue === undefined || venue === null ? '' : venue).toLowerCase();
+    if (!ok.test(t)) return [];
     var coin = market.indexOf('perp:') === 0 ? market.slice(5) : String(sym).indexOf(':') > 0 ? String(sym) : null;
-    if (coin && /^[A-Za-z0-9._-]{1,12}:[A-Za-z0-9._-]{1,24}$/.test(coin)) return ['hl&c=' + encodeURIComponent(coin), 'fmp&c=' + encodeURIComponent(t.toUpperCase())];
-    if (market.indexOf('spot:') === 0) return ['fmp&c=' + encodeURIComponent(t.toUpperCase()), 'hl&c=' + encodeURIComponent('xyz:' + t.toUpperCase())];
-    return ['hl&c=' + encodeURIComponent(t), 'cg&c=' + encodeURIComponent(t.toLowerCase())];
+    if (coin && /^[A-Za-z0-9._-]{1,12}:[A-Za-z0-9._-]{1,24}$/.test(coin)) return ['hl&c=' + encodeURIComponent(coin), 'fmp&c=' + encodeURIComponent(T)];
+    // a Hyperliquid perpetual with no venue prefix is a coin
+    if (market.indexOf('perp:') === 0) return ['hl&c=' + encodeURIComponent(t), 'cg&c=' + encodeURIComponent(t.toLowerCase())];
+    // a spot token, or a stock or fund Hence holds on paper: a company, unless it is a wrapped coin
+    if (/^(spot|stock|fund):/.test(market) || /solana|robinhood/.test(place)) {
+      return Object.prototype.hasOwnProperty.call(WRAPPED, T) ? ['hl&c=' + encodeURIComponent(WRAPPED[T])] : ['fmp&c=' + encodeURIComponent(T), 'hl&c=' + encodeURIComponent('xyz:' + T)];
+    }
+    // no market id: the venue's name is all there is to go by
+    if (place.indexOf('xyz') >= 0) return ['hl&c=' + encodeURIComponent('xyz:' + T), 'fmp&c=' + encodeURIComponent(T)];
+    if (place.indexOf('hyperliquid') === 0) return ['hl&c=' + encodeURIComponent(t), 'cg&c=' + encodeURIComponent(t.toLowerCase())];
+    return ['hl&c=' + encodeURIComponent(t)];
   }
-  function logo(id, sym, cls) {
+  function logo(id, sym, cls, venue) {
     var t = ticker(sym), tile = el('span', 'logo' + (cls ? ' ' + cls : ''), (t.replace(/[^A-Za-z0-9]/g, '').charAt(0) || '?').toUpperCase());
     var hue = 0;
     for (var i = 0; i < t.length; i++) hue = (hue * 31 + t.charCodeAt(i)) % 360;
     tile.style.setProperty('--lc', 'hsl(' + hue + ' 42% 34%)');
     tile.setAttribute('aria-hidden', 'true');
-    var from = home ? sources(id, sym) : [];
+    var from = home ? sources(id, sym, venue) : [];
     if (!from.length) return tile;
     var img = document.createElement('img'), n = 0;
     img.alt = ''; img.decoding = 'async'; img.referrerPolicy = 'no-referrer';
@@ -464,8 +555,20 @@
     if (rows.length > 1) card.appendChild(alloc);
     rows.forEach(function (h, i) {
       var row = el('div', 'row'), name = el('span', 'sym', ticker(h.symbol || h.market_id || 'n/a'));
-      row.appendChild(logo(h.instrument_id || h.market_id, h.symbol));
+      row.appendChild(logo(h.instrument_id || h.market_id, h.symbol, null, h.venue));
       if (h.name && ticker(h.name) !== ticker(h.symbol)) name.appendChild(el('small', '', h.name));
+      // the name opens the asset here (its price, its history, what it is). The rest of the row still says why it is held.
+      var which = assetId(h);
+      if (which) {
+        name.className = 'sym go'; name.tabIndex = 0; name.setAttribute('role', 'link');
+        var see = function (ev) {
+          if (ev.type === 'keydown' && ev.key !== 'Enter') return;
+          if (!canCall) return;                                    // a chat that lets a card ask for nothing: the row behaves as before
+          ev.preventDefault(); ev.stopPropagation(); hideTip();
+          ask('get_asset', { id: which }, name, null);
+        };
+        name.addEventListener('click', see); name.addEventListener('keydown', see);
+      }
       row.appendChild(name);
       row.appendChild(el('span', 'tag ' + (h.side === 'short' ? 'short' : 'long'), h.side || 'n/a'));
       row.appendChild(el('span', 'w', isNum(h.weight_pct) ? h.weight_pct.toFixed(h.weight_pct % 1 ? 1 : 0) + '%' : 'n/a'));
@@ -569,9 +672,10 @@
     var rows = value.theses.filter(function (t) { return t && typeof t === 'object'; });
     if (!rows.length) card.appendChild(el('div', 'state', 'No theses in this list.'));
     rows.forEach(function (t) {
-      // the whole row opens the thesis, when its address is a plain https one
-      var item = el('a', 'item');
-      if (!linkTo(item, t.url)) item = el('div', 'item');
+      // the whole row opens the thesis: here, in the card, where the chat lets a card ask Hence for it (the person's
+      // own theses are read as theirs, private ones included); in Hence otherwise, when its address is a plain https one
+      var item = el('a', 'item'), id = typeof t.thesis_id === 'string' && UUID.test(t.thesis_id) ? t.thesis_id : null;
+      if (!linkTo(item, t.url, id ? function (otherwise) { return ask(value.which ? 'get_my_thesis' : 'get_thesis', { thesis_id: id }, item, otherwise); } : null)) item = el('div', 'item');
       var top = el('div', 'top');
       top.appendChild(el('h2', '', t.title || 'Untitled thesis'));
       if ('return_1m_pct' in t) top.appendChild(explain(el('span', 'tag ' + tone(t.return_1m_pct), pct(t.return_1m_pct)), 'One month, hypothetical',
@@ -581,7 +685,17 @@
       var foot = el('div', 'foot'), legs = Array.isArray(t.top_holdings) ? t.top_holdings.filter(function (h) { return h && typeof h === 'object' && h.symbol; }).slice(0, 5) : [];
       if (legs.length) {
         var stack = el('span', 'stack');
-        legs.forEach(function (h) { stack.appendChild(logo(null, h.symbol)); });
+        legs.forEach(function (h) {
+          var tile = logo(h.instrument_id, h.symbol, null, h.venue), t = ticker(h.symbol);
+          // what it is and how much of the basket: opens on hover, keyboard focus or a tap. A tap on a logo
+          // opens its explanation and not the thesis the row leads to.
+          var weight = isNum(h.weight_pct) ? h.weight_pct.toFixed(h.weight_pct % 1 ? 1 : 0) + '%' : null;
+          tile.removeAttribute('aria-hidden');
+          tile.setAttribute('aria-label', [h.name || t, h.side, weight].filter(Boolean).join(', '));
+          tile.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); });
+          explain(tile, h.name && ticker(h.name) !== t ? h.name : t, [[t, h.side, weight, h.venue].filter(Boolean).join(' · ')]);
+          stack.appendChild(tile);
+        });
         foot.appendChild(stack);
       }
       var meta = [t.author, t.topic];
@@ -999,7 +1113,10 @@
     head(card, 'Hence research' + (a['class'] ? ' · ' + a['class'] : ''));
     var first = Array.isArray(a.markets) && a.markets.length ? a.markets[0] : null;
     var prof = value.profile, outcome = a['class'] === 'outcome';
-    named(card, logo(first && !outcome ? first.market_id : null, outcome ? String(a.symbol || '').replace(/^Will\s+/i, '').split(/\s/)[0] : a.symbol, 'lg'), a.symbol || a.id || 'Unknown asset');
+    // a company Hence only researches has no market to name it by: its class says it is a company, and its ticker is read without
+    // the ".US" that marked it as one (so its logo is the company's, never a token's of the same name)
+    var plain = String(a.symbol || '').replace(/\.US$/i, ''), researched = !first && !outcome && a['class'] === 'equity';
+    named(card, logo(first && !outcome ? first.market_id : researched ? 'stock:' + plain : null, outcome ? String(a.symbol || '').replace(/^Will\s+/i, '').split(/\s/)[0] : researched ? plain : a.symbol, 'lg'), a.symbol || a.id || 'Unknown asset');
     if (prof) card.appendChild(el('div', 'by', outcome ? [prof.status === 'open' ? 'Open' : prof.status, prof.closes_at ? 'closes ' + String(prof.closes_at).slice(0, 10) : null].filter(Boolean).join(' · ')
       : [prof.name, prof.sector, prof.exchange].filter(Boolean).join(' · ')));
     var q = value.quote, live = q && Array.isArray(q.venues) && q.venues.length ? q.venues[0] : null, ref = q && q.reference ? q.reference : null;
@@ -1095,11 +1212,21 @@
     hideTip();
     root.textContent = '';
     if (node.className.indexOf('card') === 0) node.className += ' in';
+    if (trail.length) {
+      // the person came here from another answer on this card: one step back, to what they were reading
+      var b = el('button', 'back', 'Back');
+      b.type = 'button';
+      b.addEventListener('click', back);
+      node.insertBefore(b, node.firstChild);
+    }
     root.appendChild(node); reportSize();
   }
 
-  function render(result) {
+  // `stepped`: the person moved inside the card (ask, back). Anything else is a new answer from the chat, and starts over.
+  function render(result, stepped) {
     if (!result || typeof result !== 'object') return;
+    if (stepped !== true) trail = [];
+    shown = result;
     var value = result.structuredContent;
     clocks = [];
     if (result.isError || !value || typeof value !== 'object') {
@@ -1111,7 +1238,9 @@
       show(failed);
       return;
     }
-    home = homeOf(value);
+    // Hence's address is read from the answer's own links. An answer with none (a company Hence only researches) keeps the
+    // one a previous answer ON THIS CARD gave, so its logo still loads after a step inside the card. It is never taken from anywhere else.
+    home = homeOf(value) || home;
     if (Array.isArray(value.theses)) show(list(value));
     else if (Array.isArray(value.markets)) show(markets(value));
     else if (value.asset && typeof value.asset === 'object') show(asset(value));
@@ -1161,6 +1290,7 @@
     .then(function (r) {
       applyContext(r && r.hostContext);
       canOpen = !!(r && r.hostCapabilities && r.hostCapabilities.openLinks);
+      canCall = !!(r && r.hostCapabilities && r.hostCapabilities.serverTools);
     }, function () { /* a host that refuses still gets a working card with plain links */ })
     .then(function () { notify('ui/notifications/initialized'); });
 })();

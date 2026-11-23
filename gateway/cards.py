@@ -18,11 +18,18 @@ How it fits together:
 
 The page is data/thesis-card.html. It loads ONE kind of thing: asset logos, as images, from
 Hence's own public address (the content policy below names that address under images and
-nothing under anything else). No script, font or stylesheet is loaded, and the page can call
-nothing: every figure it shows arrives from the host. It puts every value on the page as text
-and never as markup, and shows a figure that was not read as "n/a". A chat that allows no
+nothing under anything else). No script, font or stylesheet is loaded, and the page reaches no
+address itself: every figure it shows arrives from the host. It puts every value on the page as
+text and never as markup, and shows a figure that was not read as "n/a". A chat that allows no
 images still gets a whole card: each logo has a lettered tile under it. A host with no support
 for cards ignores all of this: every tool still returns its full answer as text.
+
+Since 2026-11-23 a person can move around inside the card: a thesis in a list opens there, a
+holding's name opens that asset, and "Back" returns. The card asks the HOST to call this server
+for it (tools/call, under the person's own connection), for one of three tools named on the
+page, all of them reads: get_thesis, get_my_thesis, get_asset. No tool that saves, prepares or
+places anything is named on the page, so no click on a card can reach one. tests/test_cards.py
+and tests/test_trades.py pin that.
 
 Until 2026-11-15 the page loaded nothing at all and looked like nothing in particular. It is
 now drawn in Hence's own look, with the logos people know the assets by.
