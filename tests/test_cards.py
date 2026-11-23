@@ -103,7 +103,8 @@ class ThePage(unittest.TestCase):
         self.assertEqual(html.count("document.createElement('img')"), 1)
         self.assertEqual(len(re.findall(r'\bimg\.src\s*=', html)), 2)
         self.assertEqual(html.count('img.src = home + ICON + from['), 2)                # never an address from the answer itself
-        self.assertIn("var home = null, ICON = '/api/icon?v=4&src=';", html)
+        # v=5 (2026-11-23): the app now returns a light mark on a dark tile; the number changes so no browser keeps the white one
+        self.assertIn("var home = null, ICON = '/api/icon?v=5&src=';", html)
         self.assertIn("function origin(url) { var safe = hence(url), m = safe ? /^https:\/\/[^\/?#\s]+/.exec(safe) : null; return m ? m[0] : null; }", html)
         self.assertIn('home = homeOf(value) || home;', html)                         # an answer with no link keeps the address an earlier answer on this card gave
         self.assertEqual(len(re.findall(r'\bhome\s*=[^=]', html)), 2)                  # set where it is declared (null) and here, nowhere else
