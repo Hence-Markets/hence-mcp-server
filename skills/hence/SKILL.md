@@ -25,7 +25,8 @@ person has connected their Hence account, `get_my_account`, `list_my_theses`, `g
 `get_my_portfolio`, `check_thesis`, `save_thesis_draft`, `get_thesis_research` and, where they
 are switched on, `start_thesis_research`, `propose_trade`, `propose_basket`, `get_trade_proposals`,
 `get_trading_status` and `place_trade`.
-`get_thesis_guide` needs no account. Call
+`get_thesis_guide` needs no account, unless the server asks for the sign-in first: then every
+tool, the public ones included, runs only once the person has connected. Call
 `tools/list` for the current set: the server gains tools without this skill changing.
 
 **The `hence` command** (when there is no MCP client, or in a script):

@@ -1254,7 +1254,10 @@ def public_definition(tool):
     # Who may call it (OpenAI's per-tool securitySchemes; SEP-1488 proposes the same field for MCP):
     # a public tool runs signed out, an account tool needs a connection with its one permission.
     # ChatGPT shows its "connect" step only for a tool declared this way. Other clients ignore it.
-    schemes = [{'type': 'oauth2', 'scopes': [tool['scope']]}] if tool.get('scope') else [{'type': 'noauth'}]
+    # Under sign-in first (config.sign_in_first) no tool runs signed out: a tool that reads public
+    # data needs a connection too, with no permission of its own.
+    public = [{'type': 'oauth2', 'scopes': []}] if config.sign_in_first() else [{'type': 'noauth'}]
+    schemes = [{'type': 'oauth2', 'scopes': [tool['scope']]}] if tool.get('scope') else public
     out['securitySchemes'] = schemes
     out['_meta'] = dict(cards.tool_meta(tool['name']) or {}, securitySchemes=schemes)
     return out

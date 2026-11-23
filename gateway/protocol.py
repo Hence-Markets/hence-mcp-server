@@ -75,19 +75,29 @@ WITH_TRADING = ('Nothing here creates an account or publishes a thesis. The one 
 # but Claude Code only reports that the server needs authentication, and Codex signs in by command. So
 # the model is told the step for each, and that the step is the person's: a sign-in code never passes
 # through a conversation.
+_SIGN_IN_STEPS = ('in Claude on the web, desktop or phone they press Connect where it appears; in Claude Code they run '
+                  '/mcp, choose hence and Authenticate; in Codex they run `codex mcp login hence`; in ChatGPT they connect Hence when it asks; '
+                  'with the hence command line they run `hence login`. One Hence page opens: their email, a code Hence emails them, then '
+                  'Allow. That step is theirs: never ask for the code.')
 SIGN_IN_HELP = ('Tools about the person\'s own account need them to connect their Hence account once. When a tool says they must '
-                'connect or sign in: in Claude on the web, desktop or phone they press Connect where it appears; in Claude Code they run '
-                '/mcp, choose hence and Authenticate; in Codex they run `codex mcp login hence`; in ChatGPT they connect Hence when it asks; '
-                'with the hence command line they run `hence login`. One Hence page opens: their email, a code Hence emails them, then '
-                'Allow. That step is theirs: never ask for the code. Public theses and markets need no sign-in.')
+                'connect or sign in: ' + _SIGN_IN_STEPS + ' Public theses and markets need no sign-in.')
+# Sign-in first (config.sign_in_first): a client reads this only once the person has connected, so it is
+# about a connection that ended, and about the one refusal that connecting again cannot fix.
+NOT_OPEN_TO_YOU = 'This is not open on your Hence account yet. Connecting again does not change that.'
+SIGN_IN_FIRST_HELP = ('Every tool here runs under the person\'s connected Hence account, the ones that read public theses and '
+                      'markets included. If a tool says they must connect or sign in again: ' + _SIGN_IN_STEPS + ' If a tool says '
+                      'something is not open on their Hence account yet, tell them that: connecting again does not change it.')
 
 
 def instructions():
     """What a client is told about this server. With agent trading switched on, "nothing here
     places a trade" would be false, and a model that believed it would never use place_trade, or
     would tell a person their order was only a draft. With sign-in on, it is told how a person
-    connects in each client (SIGN_IN_HELP)."""
+    connects in each client (SIGN_IN_HELP); under sign-in first, that nothing here runs signed
+    out (SIGN_IN_FIRST_HELP: "public theses need no sign-in" would be false)."""
     out = INSTRUCTIONS.replace(NO_TRADING, WITH_TRADING) if config.trading_active() else INSTRUCTIONS
+    if config.sign_in_first():
+        return out + ' ' + SIGN_IN_FIRST_HELP
     return out + ' ' + SIGN_IN_HELP if config.accounts_active() else out
 
 
@@ -255,8 +265,47 @@ def _connect(scope, headers, auth):
         # the sign-in check itself did not answer: nothing was read or sent, the account included
         return None, bearer, None, '%s. Nothing was read or done; try again shortly.' % e
     if scope not in conn['scopes']:
+        grantable = conn.get('grantable')
+        if grantable is not None and scope not in grantable:
+            # The app says this person cannot give this permission at all (it is open to some accounts only).
+            # A challenge would send them through a consent screen that cannot grant it, and back here, for
+            # ever: they are told it is not open to them instead.
+            return None, bearer, None, NOT_OPEN_TO_YOU
         return None, bearer, _challenge(403, scope, 'insufficient_scope', 'This needs a permission you have not given this agent.'), None
     return _Account(auth, conn['grant']), bearer, None, None
+
+
+def _all_scopes():
+    """Every permission the tools offered right now need, in the order the tools are listed:
+    what a person is asked for when they connect before using anything (sign-in first). One
+    consent then covers every tool. It has to: Claude Code and Codex do not come back on their
+    own for a permission that turns out to be missing. The app drops from it whatever this
+    person may not be given, so asking for all of it never grants more than is open to them."""
+    seen = []
+    for t in tools.listed():
+        if t.get('scope') and t['scope'] not in seen:
+            seen.append(t['scope'])
+    return ' '.join(seen)
+
+
+def _signed_in(headers, auth):
+    """Sign-in first (config.sign_in_first): who is calling, settled before anything is
+    answered -> (connection, challenge, unverified). Exactly one is set.
+
+    connection: the person's live connection. challenge: the HTTP 401 that sends them to Hence
+    (no credential, or a dead one). unverified: a sentence, when a credential WAS sent and
+    Hence did not answer the check. That is neither "connected" nor "sign in again": the hello
+    and the tool list, which say nothing about anyone, are still answered, so a client stays
+    connected through a restart of the app, and no tool runs until the check answers."""
+    bearer = _bearer(headers or {})
+    if not bearer or auth is None:
+        return None, _challenge(401, _all_scopes(), None, 'Connect your Hence account to use Hence.'), None
+    try:
+        return auth.connection(bearer), None, None
+    except appauth.NotConnected:
+        return None, _challenge(401, _all_scopes(), 'invalid_token', 'This agent is not connected to a Hence account. Connect it again.'), None
+    except appauth.Unavailable as e:
+        return None, None, '%s. Nothing was read or done; try again shortly.' % e
 
 
 def _task_request(method, params, meta, headers, auth, log):
@@ -311,14 +360,19 @@ def _for_the_model(value):
     return value
 
 
-def _call_tool(params, upstream, log, headers=None, auth=None):
+def _call_tool(params, upstream, log, headers=None, auth=None, gate=None):
     """-> (result, None, None), (None, (code, message), None) or (None, None, challenge).
 
     A tool's own failure is a RESULT with isError true (the model can read it and recover); a
     malformed call is a protocol error; and a signed-in tool called without a usable
     connection is a CHALLENGE, an HTTP 401/403 that tells the client to send the person to
-    Hence. A public tool never looks at the credential at all."""
+    Hence. A public tool never looks at the credential at all, except under sign-in first:
+    `gate` is then what _signed_in found, and no tool runs for a caller it could not name."""
     name = params.get('name')
+    if gate and gate[1]:
+        # sign-in first, and no usable credential: the challenge, before the call is even looked at
+        # (which tools exist is not said to a caller who has not connected either)
+        return None, None, gate[1]
     tool = tools.find(name) if isinstance(name, str) else None
     if not tool:
         return None, (INVALID_PARAMS, 'Unknown tool: %s' % (name if isinstance(name, str) else '(missing name)')), None
@@ -334,8 +388,14 @@ def _call_tool(params, upstream, log, headers=None, auth=None):
             return None, None, challenge
         if unavailable:
             if log:
-                log('tool=%s outcome=auth-unavailable' % name)
+                log('tool=%s outcome=%s' % (name, 'not-open' if unavailable == NOT_OPEN_TO_YOU else 'auth-unavailable'))
             return _refusal(unavailable), None, None
+    elif gate and gate[2]:
+        # sign-in first, a credential was sent, and Hence did not answer the check: a tool that reads
+        # public data is not run either, because nobody could be named as the one who asked
+        if log:
+            log('tool=%s outcome=auth-unavailable' % name)
+        return _refusal(gate[2]), None, None
     started = time.monotonic()
     try:
         value = tool['handler'](args, upstream, account) if scope else tool['handler'](args, upstream)
@@ -372,8 +432,16 @@ def _call_tool(params, upstream, log, headers=None, auth=None):
     return result, None, None
 
 
-def _tools_list():
-    return [tools.public_definition(t) for t in tools.listed()]
+def _tools_list(conn=None):
+    """What tools/list sends. Under sign-in first the list is the caller's own (`conn`, their
+    connection): a tool whose permission the app says this person cannot give is left out, so
+    an agent is never offered a trade tool that could only refuse it. With no connection, or an
+    app that did not say what is open to them, it is every tool offered right now."""
+    offered = tools.listed()
+    grantable = conn.get('grantable') if conn else None
+    if grantable is not None:
+        offered = [t for t in offered if not t.get('scope') or t['scope'] in grantable]
+    return [tools.public_definition(t) for t in offered]
 
 
 def handle(headers, raw, upstream, log=None, auth=None):
@@ -416,6 +484,16 @@ def _handle(headers, raw, upstream, log, auth):
             return 503, None
         return 503, _error(msg_id, NOT_OPEN, 'The Hence MCP server is not open yet.')
 
+    # ── sign-in first: nothing is answered to a caller Hence cannot name ──────────────────
+    # The hello and the tool list included, so a client asks the person to connect when the
+    # server is ADDED, the one moment every client handles, not in the middle of a chat. A
+    # tools/call goes on to _call_tool with what was found (`gate`), which answers the same
+    # challenge in the form the calling client reads (ChatGPT's is a result, not a 401).
+    gate = _signed_in(headers, auth) if config.sign_in_first() else None
+    if gate and gate[1] and (method != 'tools/call' or is_notification):
+        return gate[1][0], (None if is_notification else _error(msg_id, SIGN_IN, gate[1][1])), {'WWW-Authenticate': gate[1][2]}
+    conn = gate[0] if gate else None
+
     # ── modern: the request says which version it speaks ──────────────────────────────────
     if body_version is not None:
         if not isinstance(body_version, str):
@@ -443,13 +521,14 @@ def _handle(headers, raw, upstream, log, auth):
                 return 200, _error(msg_id, err[0], err[1])
             return 200, _result(msg_id, dict(result, resultType='complete', ttlMs=3600000, cacheScope='public', _meta=stamp))
         if method == 'tools/list':
-            return 200, _result(msg_id, {'resultType': 'complete', 'tools': _tools_list(),
-                                         'ttlMs': 300000, 'cacheScope': 'public', '_meta': stamp})
+            return 200, _result(msg_id, {'resultType': 'complete', 'tools': _tools_list(conn),
+                                         # under sign-in first the list can differ by person: never one cache for all
+                                         'ttlMs': 300000, 'cacheScope': 'private' if gate else 'public', '_meta': stamp})
         if method == 'tools/call':
             if _header_value(headers.get('mcp-name')) != params.get('name'):
                 return 400, _error(msg_id, HEADER_MISMATCH,
                                    'Header mismatch: Mcp-Name header does not match the tool name in the body')
-            result, err, challenge = _call_tool(params, upstream, log, headers, auth)
+            result, err, challenge = _call_tool(params, upstream, log, headers, auth, gate)
             if challenge and _speaks_result_challenge(headers):
                 answer = challenge_result(challenge)
                 return 200, _result(msg_id, dict(answer, resultType='complete', _meta=dict(answer['_meta'], **stamp)))
@@ -496,12 +575,12 @@ def _handle(headers, raw, upstream, log, auth):
     if method == 'ping':
         return 200, _result(msg_id, {})
     if method == 'tools/list':
-        return 200, _result(msg_id, {'tools': _tools_list()})
+        return 200, _result(msg_id, {'tools': _tools_list(conn)})
     if method in ('resources/list', 'resources/read'):
         result, err = _resource(method, params)
         return 200, (_error(msg_id, err[0], err[1]) if err else _result(msg_id, result))
     if method == 'tools/call':
-        result, err, challenge = _call_tool(params, upstream, log, headers, auth)
+        result, err, challenge = _call_tool(params, upstream, log, headers, auth, gate)
         if challenge and _speaks_result_challenge(headers):
             return 200, _result(msg_id, challenge_result(challenge))
         if challenge:
