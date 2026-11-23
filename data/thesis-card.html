@@ -370,7 +370,8 @@
   function origin(url) { var safe = hence(url), m = safe ? /^https:\/\/[^\/?#\s]+/.exec(safe) : null; return m ? m[0] : null; }
   function homeOf(value) {
     // an order the agent placed carries no link of its own: its market's address in Hence says where Hence is
-    var lists = [[value], value.theses, value.markets, value.proposals, value.asset && value.asset.markets, [value.proposal], [value.order], value.recent], found = null;
+    // (and a company Hence only researches has no market: its own research page is its link)
+    var lists = [[value], value.theses, value.markets, value.proposals, value.asset && value.asset.markets, [value.asset], [value.proposal], [value.order], value.recent], found = null;
     lists.forEach(function (list) {
       if (!Array.isArray(list)) return;
       list.forEach(function (x) { if (!found && x && typeof x === 'object') found = origin(x.url || x.market_url); });
@@ -1195,7 +1196,7 @@
     }
     if (value.analysis && value.analysis.verdict) { card.appendChild(el('div', 'label', 'Hence analysis')); card.appendChild(el('p', '', value.analysis.verdict)); }
     if (Array.isArray(value.unavailable) && value.unavailable.length) card.appendChild(el('div', 'warnline', 'Could not be read: ' + value.unavailable.join(', ') + '.'));
-    var button = first ? openButton(first.url, 'Trade in Hence') : null;
+    var button = first ? openButton(first.url, 'Trade in Hence') : openButton(a.url, 'Read the research in Hence');
     if (button) card.appendChild(button);
     card.appendChild(el('div', 'small', (a.tradeable_on_hence === false ? 'Hence does not list a market for this asset: research only. ' : '') + 'Nothing here is investment advice.'));
     return card;

@@ -190,6 +190,29 @@ class ThePage(unittest.TestCase):
         for good in ('perp:ETH', 'perp:xyz:HOOD', 'UBER.US', 'hip4:1212:0'):
             self.assertTrue(tools._ASSET_ID.match(good) or shape.OUTCOME_ID_RE.match(good), good)
 
+    def test_a_company_hence_only_researches_still_gets_its_logo(self):
+        # 2026-11-23: the card learns where Hence is from the answer's own links and loads logos from nowhere else. A
+        # company Hence only researches has no market, so its answer had no link at all: opened on its own (not from a
+        # thesis) it drew a lettered tile. Its research page in Hence is now its link.
+        html = page()
+        self.assertEqual(shape.research_url('https://app.hence.markets', 'UBER'), 'https://app.hence.markets/#/analysis/UBER')
+        self.assertEqual(shape.research_url('https://app.hence.markets', 'BRK.B'), 'https://app.hence.markets/#/analysis/BRK.B')
+        for bad in (None, '', 'uber', 'UBER US', 'A/B', '../x', 'UBER?x=1', 'UBER#y', 'TOOLONGTICKER1', 7, '.US'):
+            self.assertIsNone(shape.research_url('https://app.hence.markets', bad), repr(bad))      # only a plain ticker is ever put in an address
+        base = {'unavailable': [], 'not_applicable': [], 'sections_asked': []}
+        equity = dict(base, asset={'id': 'UBER.US', 'symbol': 'UBER.US', 'class': 'equity', 'tradeable_on_hence': False, 'markets': [], 'reference_ticker': 'UBER'})
+        self.assertEqual(shape.asset_research(equity, 'https://app.hence.markets')['asset']['url'], 'https://app.hence.markets/#/analysis/UBER')
+        # an asset with a market is linked by its market, as before; and nothing but a company gets a research page
+        listed = dict(base, asset={'id': 'perp:xyz:HOOD', 'symbol': 'HOOD', 'class': 'equity', 'tradeable_on_hence': True,
+                                   'markets': [{'market_id': 'perp:xyz:HOOD', 'venue': 'trade.xyz'}], 'reference_ticker': 'HOOD'})
+        self.assertNotIn('url', shape.asset_research(listed, 'https://app.hence.markets')['asset'])
+        for other in ({'class': 'crypto'}, {'class': None}, {'reference_ticker': None}, {'reference_ticker': 'not a ticker'}):
+            answer = shape.asset_research(dict(base, asset=dict(equity['asset'], **other)), 'https://app.hence.markets')
+            self.assertNotIn('url', answer['asset'], other)
+        # the card reads Hence's address from it, and offers the page
+        self.assertIn("value.asset && value.asset.markets, [value.asset], [value.proposal]", html)
+        self.assertIn("var button = first ? openButton(first.url, 'Trade in Hence') : openButton(a.url, 'Read the research in Hence');", html)
+
     def test_a_click_on_a_link_never_does_nothing(self):
         # 2026-11-23: a person clicked a thesis in the card and nothing happened. A chat that does not open links for a
         # card left the plain link to do it, a card's frame may not open a window, and the click was swallowed; a chat
