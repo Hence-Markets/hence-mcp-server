@@ -105,17 +105,116 @@ class ThePage(unittest.TestCase):
         self.assertEqual(html.count('img.src = home + ICON + from['), 2)                # never an address from the answer itself
         self.assertIn("var home = null, ICON = '/api/icon?v=4&src=';", html)
         self.assertIn("function origin(url) { var safe = hence(url), m = safe ? /^https:\/\/[^\/?#\s]+/.exec(safe) : null; return m ? m[0] : null; }", html)
-        self.assertIn('home = homeOf(value);', html)
-        self.assertIn("var from = home ? sources(id, sym) : [];", html)                  # no Hence address in the answer: no image is asked for
+        self.assertIn('home = homeOf(value) || home;', html)                         # an answer with no link keeps the address an earlier answer on this card gave
+        self.assertEqual(len(re.findall(r'\bhome\s*=[^=]', html)), 2)                  # set where it is declared (null) and here, nowhere else
+        self.assertIn("var from = home ? sources(id, sym, venue) : [];", html)           # no Hence address in the answer: no image is asked for
         self.assertIn("img.referrerPolicy = 'no-referrer'", html)
         self.assertIn("else if (img.parentNode) img.parentNode.removeChild(img);", html)  # a logo that does not load leaves the lettered tile
         self.assertIn("var ok = /^[A-Za-z0-9._-]{1,24}$/", html)                          # only a plain ticker is ever put in an address
-        self.assertEqual(html.count('encodeURIComponent('), 6)
+        self.assertEqual(html.count('encodeURIComponent('), 12)
+        # every one of them is inside sources(), around the ticker it has just checked, or around a name from this page's own table
+        body = html[html.index('  function sources(id, sym, venue) {'):html.index('  function logo(id, sym, cls, venue) {')]
+        self.assertEqual(body.count('encodeURIComponent('), 12)
         self.assertNotRegex(html, r'<(script|link|img|iframe|video|audio|source|object|embed)\b[^>]*\b(src|href)\s*=')
         self.assertNotRegex(html, r'@import|url\(|@font-face')
         self.assertNotRegex(html, r'\bfetch\(|XMLHttpRequest|WebSocket|EventSource|sendBeacon|importScripts|new Worker')
         self.assertNotRegex(html, r'localStorage|sessionStorage|document\.cookie|indexedDB')
         self.assertEqual(len(re.findall(r'<script', html)), 1)                     # one inline script, nothing loaded
+
+    def test_a_company_is_never_asked_of_the_coin_source(self):
+        # 2026-11-23: a list row carried no market id, so every one of its logos was asked for by bare ticker: Hyperliquid's
+        # icons, then the coin source. A ticker that is both a stock and an unrelated token drew the token's logo on the
+        # stock (Robinhood's feather on INDA, an India fund). A wrong logo is worse than the lettered tile.
+        html = page()
+        body = html[html.index('  function sources(id, sym, venue) {'):html.index('  function logo(id, sym, cls, venue) {')]
+        lines = [line.strip() for line in body.splitlines() if "'cg&c='" in line]
+        # the coin source is asked in exactly two places: a Hyperliquid perpetual with no venue prefix, and (with no market
+        # id at all) a holding whose venue is plain Hyperliquid. Never for a spot token, a builder venue, or an unplaced ticker.
+        self.assertEqual(len(lines), 2, lines)
+        self.assertTrue(lines[0].startswith("if (market.indexOf('perp:') === 0) return ['hl&c='"), lines[0])
+        self.assertTrue(lines[1].startswith("if (place.indexOf('hyperliquid') === 0) return ['hl&c='"), lines[1])
+        self.assertIn("return ['hl&c=' + encodeURIComponent(t)];\n  }", body)                # cannot place it: Hyperliquid's own icons, nothing else
+        self.assertIn("? ['hl&c=' + encodeURIComponent(WRAPPED[T])] : ['fmp&c=' + encodeURIComponent(T), 'hl&c=' + encodeURIComponent('xyz:' + T)]", body)
+        self.assertIn("var WRAPPED = { WETH: 'ETH', WBTC: 'BTC', WSOL: 'SOL', WHYPE: 'HYPE' };", html)
+        # and a list row now says which market each holding is, so the card is not left to guess
+        up = StubUpstream(standard_routes())
+        row = tools.search_theses({'query': ''}, up)['theses'][0]['top_holdings'][0]
+        self.assertIn('instrument_id', row)
+        self.assertIn("var tile = logo(h.instrument_id, h.symbol, null, h.venue), t = ticker(h.symbol);", html)
+        self.assertIn("row.appendChild(logo(h.instrument_id || h.market_id, h.symbol, null, h.venue));", html)
+
+    def test_a_thesis_and_an_asset_open_inside_the_card_and_only_reads_are_asked_for(self):
+        # 2026-11-23 (Ivan): a click should open the thing in the widget itself. The card asks Hence for it THROUGH the
+        # chat, under the person's own connection, and still reaches no address itself. What it may ask for is a fixed
+        # table of reads: it can save nothing, prepare no trade and place no order.
+        html = page()
+        self.assertIn("READS = { get_thesis: true, get_my_thesis: true, get_asset: true };", html)
+        asked = html[html.index('  function ask(tool, args, origin, otherwise) {'):html.index('  function back() {')]
+        self.assertIn("if (!canCall || READS[tool] !== true) return false;", asked)             # checked before anything is sent
+        self.assertLess(asked.index('READS[tool] !== true'), asked.index("request('tools/call'"))
+        # every call site names its tool as a literal, and every one of them is a read
+        calls = re.findall(r"\bask\(([^,]+),", html.replace('function ask(tool,', ''))
+        self.assertEqual(sorted(calls), ["'get_asset'", "value.which ? 'get_my_thesis' : 'get_thesis'"])
+        every = tools.TOOLS + tools.ACCOUNT_TOOLS + tools.RESEARCH_TOOLS + tools.TRADE_TOOLS + tools.TRADING_TOOLS
+        writes = [t['name'] for t in every if t['annotations'].get('readOnlyHint') is not True]
+        self.assertTrue({'save_thesis_draft', 'propose_trade', 'propose_basket', 'place_trade', 'start_thesis_research'} <= set(writes))
+        for name in writes:
+            self.assertNotIn("'%s'" % name, html, name)                                          # no tool that changes anything is named on the page at all
+        # the three it asks for exist, and none of them writes
+        for name in ('get_thesis', 'get_my_thesis', 'get_asset'):
+            self.assertIs(next(t for t in every if t['name'] == name)['annotations'].get('readOnlyHint'), True, name)
+        # only where the chat says a card may call the server; otherwise the click opens Hence as before
+        self.assertIn("canCall = !!(r && r.hostCapabilities && r.hostCapabilities.serverTools);", html)
+        self.assertIn("if (inCard && inCard(open)) return;\n      open();", html)
+        # a refusal is Hence's own sentence under what was clicked; a call that could not be made falls back to the link
+        self.assertIn("tell(origin, text || 'Hence could not answer. Nothing was opened.');", asked)
+        self.assertIn("if (otherwise) otherwise();", asked)
+        # the person's own theses are read as theirs (private ones included), anyone else's as public
+        self.assertIn("return ask(value.which ? 'get_my_thesis' : 'get_thesis', { thesis_id: id }, item, otherwise);", html)
+        self.assertIn("id = typeof t.thesis_id === 'string' && UUID.test(t.thesis_id) ? t.thesis_id : null;", html)
+        # a new answer from the chat starts over; a step inside the card keeps the way back
+        self.assertIn("if (stepped !== true) trail = [];", html)
+        self.assertIn("if (shown) trail.push(shown);\n      render(result, true);", asked)
+
+    def test_a_holding_opens_the_right_asset_or_is_not_a_link(self):
+        # the asset a holding names is said from its market id, never guessed from a bare ticker: the same ticker is often
+        # a company and an unrelated token (WETH read as a ticker answers as an equity)
+        html = page()
+        body = html[html.index('  function assetId(h) {'):html.index('  function openButton(url, label) {')]
+        self.assertIn("if (!/^[A-Za-z0-9-]{1,9}$/.test(t) || !/^(spot|stock|fund):/.test(id)) return null;", body)
+        self.assertIn("return Object.prototype.hasOwnProperty.call(WRAPPED, T) ? 'perp:' + WRAPPED[T] : T + '.US';", body)
+        self.assertIn("ask('get_asset', { id: which }, name, null);", html)
+        self.assertIn("if (!canCall) return;", html)                                             # no asking: the row behaves as it did
+        # what it sends is something get_asset accepts
+        for good in ('perp:ETH', 'perp:xyz:HOOD', 'UBER.US', 'hip4:1212:0'):
+            self.assertTrue(tools._ASSET_ID.match(good) or shape.OUTCOME_ID_RE.match(good), good)
+
+    def test_a_click_on_a_link_never_does_nothing(self):
+        # 2026-11-23: a person clicked a thesis in the card and nothing happened. A chat that does not open links for a
+        # card left the plain link to do it, a card's frame may not open a window, and the click was swallowed; a chat
+        # that answered "could not open it" was not listened to. Whenever the address did not open, it is now shown.
+        html = page()
+        link = html[html.index('  function linkTo(a, url, inCard) {'):html.index('  function ask(tool, args, origin, otherwise) {')]
+        self.assertIn('function open() {\n      if (canOpen) {', link)
+        self.assertIn('ev.preventDefault();\n      if (inCard && inCard(open)) return;\n      open();', link)
+        self.assertIn("request('ui/open-link', { url: safe }).then(function (r) { if (r && r.isError) shut(a, safe); },", link)
+        # the person's own "no" to the chat's confirmation is final: nothing is opened behind it, and no note nags them
+        self.assertIn("function (e) { if (!/denied|cancel/i.test(String(e && e.message))) shut(a, safe); });", link)
+        self.assertEqual(link.count('window.open('), 1)
+        self.assertLess(link.index('if (canOpen) {'), link.index('window.open('))            # only for a chat that opens no links itself
+        self.assertNotIn('.catch(function () { window.open(', html)                          # never opened behind a chat that said no
+        self.assertIn("if (opened) opened.opener = null;", link)
+        self.assertIn("if (!opened) shut(a, safe);", link)
+        # the note is text, with the address as something to copy, and it is added once
+        self.assertIn("note.appendChild(el('code', '', url));", html)
+        self.assertIn("var note = a.nextSibling && a.nextSibling.className === 'unopened' ? a.nextSibling : null;", html)
+
+    def test_a_logo_in_a_list_says_what_it_is_when_pointed_at(self):
+        html = page()
+        self.assertIn("explain(tile, h.name && ticker(h.name) !== t ? h.name : t, [[t, h.side, weight, h.venue].filter(Boolean).join(' \u00b7 ')]);", html)
+        # a tap on a logo opens its explanation, not the thesis the row leads to
+        self.assertIn("tile.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); });", html)
+        self.assertIn("tile.setAttribute('aria-label', [h.name || t, h.side, weight].filter(Boolean).join(', '));", html)
 
     def test_every_value_goes_on_the_page_as_text(self):
         html = page()
@@ -141,7 +240,10 @@ class ThePage(unittest.TestCase):
             self.assertIn(said, html, said)
         self.assertIn('if (event.source !== window.parent) return;', html)         # only the host is listened to
         # the page asks the host for nothing but to open a link: no tool calls, no messages sent as the person
-        self.assertNotRegex(html, r"request\('(tools/call|ui/message|ui/update-model-context|resources/read)'")
+        # it asks the chat to call Hence in ONE place (ask(), 2026-11-23: a thesis or an asset opens inside the card), and
+        # never sends a message into the chat, changes what the model is told, or reads another resource
+        self.assertEqual(len(re.findall(r"request\('tools/call'", html)), 1)
+        self.assertNotRegex(html, r"request\('(ui/message|ui/update-model-context|resources/read)'")
 
     def test_a_market_is_drawn_from_the_fields_the_search_returns(self):
         html = page()
@@ -233,8 +335,10 @@ class TheLook(unittest.TestCase):
                      "said.forEach(function (x) { tip.appendChild(el('span', '', x)); });"):
             self.assertIn(said, html, said)
         # the buttons it has only change what THIS page shows (more of a summary, a shorter window of the same line)
-        self.assertEqual(len(re.findall(r"el\('button'", html)), 2)
-        self.assertEqual(html.count("b.type = 'button';") + html.count("more.type = 'button';"), 2)
+        # (and, 2026-11-23, one step back to what the person was reading on this card before)
+        self.assertEqual(len(re.findall(r"el\('button'", html)), 3)
+        self.assertEqual(html.count("b.type = 'button';") + html.count("more.type = 'button';"), 3)
+        self.assertIn("var b = el('button', 'back', 'Back');", html)
         # time still running is said from the clock here and the time Hence gave; a time that could not be read says nothing
         self.assertIn("if (!isNum(at)) return null;", html)
         self.assertIn("if (s <= 0) return null;", html)

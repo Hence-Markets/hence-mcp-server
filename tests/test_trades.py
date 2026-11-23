@@ -300,7 +300,15 @@ class Card(Case):
             self.assertTrue(said in html, said)
         # the button is offered only while it can still be opened, and it only opens a link
         self.assertTrue("var open = p.status === 'waiting' || p.status === 'opened';" in html, "var open = p.status === 'waiting' || p.status === 'opened';")
-        self.assertNotRegex(html, r"request\('(tools/call|ui/message|ui/update-model-context)'")
+        # The card may ask the chat to call Hence in ONE place, for one of three READS (2026-11-23: a thesis or an asset
+        # opens inside the card). No tool that prepares, places or saves anything is named on the page, so no click on a
+        # card can reach one; and it still sends no message into the chat and changes nothing the model is told.
+        self.assertEqual(len(re.findall(r"request\('tools/call'", html)), 1)
+        self.assertIn("READS = { get_thesis: true, get_my_thesis: true, get_asset: true };", html)
+        self.assertIn("if (!canCall || READS[tool] !== true) return false;", html)
+        for name in ('propose_trade', 'propose_basket', 'place_trade', 'get_trade_proposals', 'get_trading_status', 'save_thesis_draft', 'start_thesis_research'):
+            self.assertNotIn("'%s'" % name, html, name)
+        self.assertNotRegex(html, r"request\('(ui/message|ui/update-model-context)'")
         # every field the card reads is one the tools return
         got = shape.trade_propose(PROPOSED)
         for field in ('status', 'side', 'market', 'market_id', 'size_usd', 'leverage', 'order_type', 'limit_price', 'note', 'url'):

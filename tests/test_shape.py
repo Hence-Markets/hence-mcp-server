@@ -107,7 +107,8 @@ class Cards(unittest.TestCase):
         self.assertEqual(c['title'], 'Fixture card 1')
         self.assertEqual(c['holdings_count'], len(row['legs']))
         self.assertLessEqual(len(c['top_holdings']), 6)
-        self.assertEqual(set(c['top_holdings'][0]), {'symbol', 'side', 'weight_pct', 'venue'})
+        # instrument_id: how the card tells a company from a coin when it looks for the logo (2026-11-23)
+        self.assertEqual(set(c['top_holdings'][0]), {'symbol', 'name', 'side', 'weight_pct', 'venue', 'instrument_id'})
         self.assertNotIn('did:privy', json.dumps(c))
 
     def test_a_featured_card_states_a_return_only_for_a_complete_replay(self):

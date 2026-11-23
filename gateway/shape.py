@@ -92,8 +92,12 @@ def holdings(legs):
 
 
 def brief_holdings(legs, n=6):
-    """The few fields a results list needs."""
-    return [{'symbol': h['symbol'], 'side': h['side'], 'weight_pct': h['weight_pct'], 'venue': h['venue']}
+    """The few fields a results list needs. `instrument_id` is one of them: it is how the card
+    tells a company from a coin when it looks for the logo. Without it (until 2026-11-23) a row's
+    logos were asked for by bare ticker, and a ticker that is both a stock and an unrelated token
+    drew the token's logo on the stock (Robinhood's feather on an India fund)."""
+    return [{'symbol': h['symbol'], 'name': h['name'], 'side': h['side'], 'weight_pct': h['weight_pct'], 'venue': h['venue'],
+             'instrument_id': h['instrument_id']}
             for h in holdings(legs)[:n]]
 
 

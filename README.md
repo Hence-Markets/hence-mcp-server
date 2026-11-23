@@ -226,11 +226,30 @@ basket when pointed at, and a prepared trade counts down the time left to open i
 
 It loads one kind of thing: asset logos, as images, from Hence's own public address (its content
 policy names that address for images and nothing for anything else). It loads no script, font or
-stylesheet, calls nothing, puts every value on the page as text and never as markup, shows an
-unread figure as "n/a", and shows Hence's own sentence when a tool could not answer. The only
-thing it asks the host for is to open a link, and nothing on it can be edited: a number changed
-in a chat would change nothing in Hence. A logo that does not load leaves a lettered tile. A
-host without card support ignores it: every tool still returns its whole answer as text.
+stylesheet, reaches no address itself, puts every value on the page as text and never as markup,
+shows an unread figure as "n/a", and shows Hence's own sentence when a tool could not answer.
+Nothing on it can be edited: a number changed in a chat would change nothing in Hence. A logo
+that does not load leaves a lettered tile. A host without card support ignores it: every tool
+still returns its whole answer as text.
+
+**A person can move around inside the card.** A click on a thesis in a list opens that thesis
+in the card; a click on a holding's name opens that asset (its price, its history, what it is);
+and "Back" returns to what they were reading. The card asks Hence for it through the host
+(`tools/call`, made by the host under the person's own connection), and only where the host
+says a card may (`hostCapabilities.serverTools`). It may ask for three tools, all reads, named
+in one table on the page: `get_thesis`, `get_my_thesis` and `get_asset`. It can save nothing,
+prepare no trade and place no order, and no tool that does is named on the page at all. Where a
+host lets a card ask for nothing, a click opens Hence instead.
+
+**A click never does nothing.** A host that opens links is asked to (it may show the person a
+confirmation, and their "no" is final). A host that does not is tried directly. Whenever the
+address did not open, it is shown under what was clicked, as text to copy; and a read Hence
+refused is shown as Hence's own sentence there.
+
+**A logo is the asset's own or it is the lettered tile.** A company's logo is asked for only
+where the market id says it is a company, and a coin's only where it is a coin: the same ticker
+is often both, and a list row that asked by bare ticker once drew an unrelated token's logo on a
+fund. Every list row now carries each holding's `instrument_id` for this.
 
 A thesis's chart points travel to the card only (`card` in the structured answer): the text a
 model reads carries the figures and not ninety pairs of numbers.

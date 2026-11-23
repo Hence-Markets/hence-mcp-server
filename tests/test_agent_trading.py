@@ -553,7 +553,7 @@ class TheCard(unittest.TestCase):
         html = self.html
         # still one place an image is made, two buttons that change only what the page shows, one way to ask the host for anything
         self.assertEqual(html.count("document.createElement('img')"), 1)
-        self.assertEqual(len(re.findall(r"el\('button'", html)), 2)
+        self.assertEqual(len(re.findall(r"el\('button'", html)), 3)           # (the third, 2026-11-23: one step back inside the card)
         self.assertEqual(len(re.findall(r"request\('ui/open-link'", html)), 1)
         self.assertNotRegex(html, r'innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function')
         self.assertNotRegex(html, r'\bfetch\(|XMLHttpRequest|WebSocket|EventSource|sendBeacon')
