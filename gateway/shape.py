@@ -65,6 +65,17 @@ def perp_url(public_base, coin):
     return '%s/m/%s/%s' % (public_base, venue, urllib.parse.quote(coin, safe=''))
 
 
+RESEARCH_TICKER_RE = re.compile(r'^[A-Z0-9][A-Z0-9.\-]{0,11}$')
+
+
+def research_url(public_base, ticker):
+    """Where Hence shows its research on a listed company, or None when `ticker` is not a plain
+    ticker (it is put in an address, so nothing else is ever put there)."""
+    if not isinstance(ticker, str) or not RESEARCH_TICKER_RE.match(ticker):
+        return None
+    return '%s/#/analysis/%s' % (public_base, urllib.parse.quote(ticker, safe='.-'))
+
+
 def rhc_url(public_base, address):
     return '%s/m/rhc/%s' % (public_base, str(address).lower())
 
@@ -1172,6 +1183,12 @@ def asset_research(data, public_base, asked=None):
     tradeable = a.get('tradeable_on_hence') if isinstance(a.get('tradeable_on_hence'), bool) else None
     out = {'asset': {'id': text(a.get('id'), 80), 'symbol': text(a['symbol'], 24), 'class': text(a.get('class'), 40), 'tradeable_on_hence': tradeable,
                      'markets': markets, 'reference_ticker': text(a.get('reference_ticker'), 16)}}
+    # A company Hence only researches has no market, and so had no link to Hence anywhere in its answer. The card
+    # learns where Hence is from the answer's own links and loads logos from nowhere else, so such an asset opened on
+    # its own drew a lettered tile where its logo should be (2026-11-23). Its research page in Hence is its link.
+    research = research_url(public_base, out['asset']['reference_ticker']) if out['asset']['class'] == 'equity' and not markets else None
+    if research:
+        out['asset']['url'] = research
     if asked is None:
         asked = [s for s in data.get('sections_asked') or [] if s in ASSET_SECTIONS]
     asked = [s for s in ASSET_SECTIONS if s in asked]
