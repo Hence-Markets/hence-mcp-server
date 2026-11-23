@@ -326,7 +326,9 @@ claude mcp add --transport http hence https://mcp.hence.markets/mcp
 ```
 
 For any other agent, copy the `skills/hence` folder into its skills directory and add the
-server address above to its MCP settings. Public theses and markets work with no sign-in.
+server address above to its MCP settings. Public theses and markets work with no sign-in,
+unless the server runs sign-in first (`HENCE_MCP_SIGN_IN_FIRST=1`): then the person connects
+their Hence account when they add the server, and nothing answers before they have.
 
 The first time a tool needs the person's account, they connect it once. How each client starts
 that, and what this server sends it:
@@ -369,6 +371,25 @@ What each failure means, because they are not the same thing to a person:
 
 An unanswered check is never turned into "sign in again": that would throw away a good
 connection. A disconnect takes effect on the next call, not when the token expires.
+
+### Sign-in first
+
+With `HENCE_MCP_SIGN_IN_FIRST=1` step 1 happens when the server is added, not when a signed-in
+tool is first called: every request with no credential gets the `401`, the hello, the tool
+list and the tools that read public data included. A person who pasted this server's address
+into their client already wants it, and a sign-in asked at that moment is the one every
+client handles; asked in the middle of a chat, Claude Code and Codex show the model an error
+and no button. It also means every call has a person behind it.
+
+- The challenge asks for every permission the tools on offer need, at once. Claude Code and
+  Codex do not come back on their own for one that turns out to be missing.
+- The Hence app decides what a person may be given. It can open some permissions to some
+  accounts only, and says which in its answer about a token (`grantable`). A tool whose
+  permission a person could never be given is left out of their tool list, and calling it
+  answers "not open on your Hence account yet", never a consent screen that cannot grant it.
+- `/healthz` and the sign-in metadata stay open: they are how a client finds the sign-in.
+- A credential the app could not check (a timeout) still gets the hello and the tool list, so
+  a client stays connected through a restart of the app. No tool runs until the check answers.
 
 ## What the server promises
 
@@ -435,6 +456,7 @@ docker build -t hence-mcp-server . && docker run --rm -p 127.0.0.1:4340:4340 -e 
 | `HENCE_MCP_ALLOWED_ORIGINS` | the public base | Browser origins allowed to call. Server-side clients send no `Origin` and are unaffected; `localhost` is always allowed |
 | `HENCE_MCP_ACCOUNTS` | `0` | Strictly `1` turns sign-in on. It also needs the secret below; with either missing, the signed-in tool is not listed and no sign-in is advertised |
 | `HENCE_MCP_GATEWAY_SECRET` | unset | The secret this server signs its calls to the Hence app with, at least 32 characters. The app holds the same value |
+| `HENCE_MCP_SIGN_IN_FIRST` | `0` | Strictly `1` makes a person connect their Hence account before anything is answered: the hello, the tool list and the tools that read public data included. Needs sign-in on. Switch it on only once the app lets every account connect (`AGENT_CONNECT_PUBLIC=1` there); before that it locks out everyone who is not on the team |
 | `HENCE_MCP_RESEARCH` | `0` | Strictly `1` offers `start_thesis_research`. Needs sign-in on, and the app's `AGENT_RESEARCH_ACTIVE=1` |
 | `HENCE_MCP_SPOT_FIGURES` | `1` | `0` withdraws spot token prices, volume, liquidity and market cap (identity and link stay) |
 | `HENCE_MCP_TRADES` | `0` | Strictly `1` offers `propose_trade`, `propose_basket` and `get_trade_proposals`. Needs sign-in on, and the app's `AGENT_TRADES_ACTIVE=1` |

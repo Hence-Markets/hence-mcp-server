@@ -66,6 +66,21 @@ def accounts_active():
     return _env('HENCE_MCP_ACCOUNTS', '0') == '1' and bool(gateway_secret())
 
 
+def sign_in_first():
+    """Whether a person must connect their Hence account before this server answers anything:
+    the hello, the tool list and the tools that read public data included. Strictly '1', and
+    only with sign-in on and configured, so a half-configured server never asks people for a
+    sign-in it cannot complete.
+
+    Why (decided 2026-11-23): this server is added by pasting its address, so whoever adds it
+    already wants it, and a sign-in asked once, when it is added, is the step every client
+    handles. A sign-in asked in the middle of a chat is not: Claude Code and Codex show the
+    model an error and no button. Signed out, Hence also cannot tell one person's use from
+    another's. It must be switched on only once the app lets every account connect
+    (AGENT_CONNECT_PUBLIC=1 there): before that it would lock out everyone who is not on the team."""
+    return accounts_active() and _env('HENCE_MCP_SIGN_IN_FIRST', '0') == '1'
+
+
 def research_active():
     """Whether the tool that starts Hence research is offered. Its own switch, because it is the
     one tool that spends Hence's money; it must match the app's AGENT_RESEARCH_ACTIVE, or the

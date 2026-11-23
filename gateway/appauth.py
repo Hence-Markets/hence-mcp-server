@@ -165,8 +165,8 @@ class AppAuth:
         return status, (data if isinstance(data, dict) else None), response_headers
 
     def connection(self, token):
-        """{'grant', 'scopes', 'client_name'} for a live credential issued for this server.
-        Raises NotConnected or Unavailable."""
+        """{'grant', 'scopes', 'client_name', 'grantable'} for a live credential issued for this
+        server. Raises NotConnected or Unavailable."""
         if not isinstance(token, str) or not token or len(token) > 256:
             raise NotConnected()
         key = hashlib.sha256(token.encode('utf-8')).hexdigest()       # the token itself is never kept
@@ -185,7 +185,12 @@ class AppAuth:
         grant, scope = data.get('grant'), data.get('scope')
         if not isinstance(grant, str) or not grant or not isinstance(scope, str):
             raise Unavailable('Hence gave an answer that could not be read')
-        info = {'grant': grant, 'scopes': scope.split(), 'client_name': data.get('client_name') if isinstance(data.get('client_name'), str) else None}
+        # `grantable`: every permission this PERSON could give an agent right now, as the app decides it (some are
+        # open to some accounts only). None when the app did not say (an app from before it did): then nothing is
+        # assumed closed, and a missing permission is asked for as before.
+        grantable = data.get('grantable')
+        info = {'grant': grant, 'scopes': scope.split(), 'client_name': data.get('client_name') if isinstance(data.get('client_name'), str) else None,
+                'grantable': grantable.split() if isinstance(grantable, str) else None}
         ttl = min(CACHE_S, data['expires_in']) if isinstance(data.get('expires_in'), int) and not isinstance(data.get('expires_in'), bool) else CACHE_S
         if ttl > 0:
             with self._lock:

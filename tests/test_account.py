@@ -285,7 +285,8 @@ class AppCalls(Env):
 
     def test_asking_who_a_token_is(self):
         auth = self.make([self.active()])
-        self.assertEqual(auth.connection(TOKEN), {'grant': GRANT, 'scopes': ['account:read'], 'client_name': 'Example Agent'})
+        # `grantable` None: this app did not say what is open to the person, so nothing is assumed closed
+        self.assertEqual(auth.connection(TOKEN), {'grant': GRANT, 'scopes': ['account:read'], 'client_name': 'Example Agent', 'grantable': None})
         url, method, headers, body = self.sent[0]
         self.assertEqual((url, method), ('http://app.test/api/agents/v1/introspect', 'POST'))
         self.assertEqual(json.loads(body), {'token': TOKEN, 'resource': 'https://mcp.hence.markets/mcp'})     # the audience travels with the question
